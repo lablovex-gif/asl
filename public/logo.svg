@@ -1,0 +1,30 @@
+<svg viewBox="-20 -20 340 340" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="tag-cut-logo">
+      <rect x="-50" y="-50" width="400" height="400" fill="white" />
+      <g transform="translate(170, 230) rotate(-10)">
+        <path d="M 0 -40 L 35 -5 L 35 55 L -35 55 L -35 -5 Z" fill="black" stroke="black" strokeWidth="32" strokeLinejoin="round" />
+      </g>
+    </mask>
+    <mask id="tag-hole-text-logo">
+      <rect x="-100" y="-100" width="200" height="200" fill="white" />
+      <circle cx="0" cy="-24" r="7" fill="black" />
+      <text x="0" y="24" fontSize="58" fontFamily="sans-serif" fontWeight="900" fill="black" textAnchor="middle" dominantBaseline="central">$</text>
+    </mask>
+  </defs>
+  <g mask="url(#tag-cut-logo)">
+    <line x1="166" y1="166" x2="250" y2="250" stroke="black" strokeWidth="36" strokeLinecap="round" />
+    <circle cx="110" cy="110" r="80" fill="none" stroke="black" strokeWidth="22" />
+    <g fill="none" stroke="black" strokeWidth="6">
+      <circle cx="110" cy="110" r="52" />
+      <line x1="110" y1="58" x2="110" y2="162" />
+      <line x1="58" y1="110" x2="162" y2="110" />
+      <ellipse cx="110" cy="110" rx="26" ry="52" />
+      <ellipse cx="110" cy="110" rx="52" ry="26" />
+    </g>
+  </g>
+  <path d="M 166 206 Q 190 190 205 205" fill="none" stroke="black" strokeWidth="5" strokeLinecap="round" />
+  <g transform="translate(170, 230) rotate(-10)">
+    <path d="M 0 -40 L 35 -5 L 35 55 L -35 55 L -35 -5 Z" fill="black" stroke="black" strokeWidth="12" strokeLinejoin="round" mask="url(#tag-hole-text-logo)" />
+  </g>
+</svg>
