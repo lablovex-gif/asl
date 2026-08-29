@@ -2206,8 +2206,8 @@ export default function App() {
       return next;
     });
     
-    // Add user message to history immediately for feedback
-    setHistory(prev => [...prev, { type: "user", content: currentQuery }]);
+    // Set current search only (do not accumulate previous search sentences)
+    setHistory([{ type: "user", content: currentQuery }]);
 
     try {
       const response = await getProductAlternatives(currentQuery, currentLang);
@@ -2263,8 +2263,11 @@ export default function App() {
       isSearchFinishingRef.current = true;
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Add AI response to history with results
-      setHistory(prev => [...prev, { type: "ai", content: mappedResponse }]);
+      // Show current search and AI response
+      setHistory([
+        { type: "user", content: currentQuery },
+        { type: "ai", content: mappedResponse }
+      ]);
     } catch (error) {
       console.error("Search error:", error);
       isSearchFinishingRef.current = true;
@@ -2895,9 +2898,20 @@ export default function App() {
         <div className="max-w-4xl mx-auto">
           <form 
             onSubmit={handleSearch}
+            autoComplete="off"
+            noValidate
             className="relative group"
           >
             <Input 
+              id="pezeex-search-input"
+              name="pezeex_search_field"
+              type="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-lpignore="true"
+              data-form-type="other"
               placeholder={t.placeholder}
               className={`h-14 text-base rounded-2xl border-2 border-primary/20 focus-visible:border-primary focus-visible:ring-primary/20 transition-all shadow-xl bg-background/50 backdrop-blur-md ${t.dir === "rtl" ? "pr-12 pl-16" : "pl-12 pr-16"}`}
               value={searchQuery}
