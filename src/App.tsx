@@ -2272,6 +2272,16 @@ export default function App() {
       console.error("Search error:", error);
       isSearchFinishingRef.current = true;
       await new Promise(resolve => setTimeout(resolve, 500));
+      setHistory([
+        { type: "user", content: currentQuery },
+        { 
+          type: "ai", 
+          content: { 
+            alternatives: [], 
+            message: t.noResults || "Unable to fetch alternatives right now. Please try again." 
+          } as ProductsResponse 
+        }
+      ]);
     } finally {
       setLoading(false);
     }
