@@ -21,18 +21,26 @@ function isValidHttpUrl(urlString: string): boolean {
   }
 }
 
-function sanitizeUrl(rawUrl: string): string {
-  if (!rawUrl || typeof rawUrl !== "string") return "";
-  let clean = rawUrl.trim();
-  // Strip markdown, brackets
-  clean = clean.replace(/^[<(\[]+|[>)\]]+$/g, "");
-  const match = clean.match(/(https?:\/\/[^\s\)]+)/i);
-  if (match) {
-    clean = match[1];
-  } else if (!/^https?:\/\//i.test(clean) && clean.includes(".")) {
-    clean = "https://" + clean;
+function sanitizeUrl(rawUrl: string, fallbackQuery?: string): string {
+  if (rawUrl && typeof rawUrl === "string") {
+    let clean = rawUrl.trim();
+    clean = clean.replace(/^[<(\[]+|[>)\]]+$/g, "");
+    const match = clean.match(/(https?:\/\/[^\s\)]+)/i);
+    if (match) {
+      clean = match[1];
+    } else if (!/^https?:\/\//i.test(clean) && clean.includes(".")) {
+      clean = "https://" + clean;
+    }
+    if (isValidHttpUrl(clean)) {
+      return clean;
+    }
   }
-  return isValidHttpUrl(clean) ? clean : "";
+
+  if (fallbackQuery && typeof fallbackQuery === "string" && fallbackQuery.trim()) {
+    return `https://www.google.com/search?q=${encodeURIComponent(fallbackQuery.trim())}`;
+  }
+
+  return "";
 }
 
 let aiClient: GoogleGenAI | null = null;
@@ -42,7 +50,14 @@ function getAIClient(): GoogleGenAI {
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not configured.");
     }
-    aiClient = new GoogleGenAI({ apiKey });
+    aiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
   }
   return aiClient;
 }
@@ -51,6 +66,13 @@ function getAIClient(): GoogleGenAI {
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// Candidate models in preference order (reliable and active)
+const CANDIDATE_MODELS = [
+  "gemini-3.1-flash-lite",
+  "gemini-flash-latest",
+  "gemini-3.8-flash",
+];
 
 // Secure search endpoint proxying Gemini API calls
 app.post("/api/search", async (req, res) => {
@@ -66,75 +88,71 @@ app.post("/api/search", async (req, res) => {
 
     const ai = getAIClient();
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `أنت مساعد ذكي مبرمج خصيصاً لمساعدة المستخدمين في إيجاد بدائل حقيقية وأرخص للمنتجات.
+    const prompt = `أنت مساعد ذكي متخصص في إيجاد بدائل حقيقية وممتازة وأرخص للمنتجات.
 
-      مدخلات المستخدم: "${cleanProductName}"
+المنتج أو الاستفسار المطلوب: "${cleanProductName}"
 
-      عندما يطلب المستخدم إيجاد بدائل لمنتج معين، يجب عليك اتباع الخطوات التالية بدقة بالغة:
-      1. ابحث في جوجل أولاً باستخدام أداة البحث المدمجة (Google Search tool) عن بدائل أرخص لهذا المنتج.
-      2. استخدم مصطلحات بحث فعالة مثل: "بديل أرخص لـ [المنتج]" أو "[المنتج] alternative cheaper" أو "أفضل بديل [المنتج] سعر".
-      3. انتظر نتائج البحث الحقيقية واقرأها بعناية.
-      4. استخرج ما بين 10 إلى 20 منتجاً كبدائل مقترحة من نتائج البحث الفعلية، بشرط أن يحتوي كل خيار على رابط حقيقي مباشر لصفحة المنتج.
+المطلوب:
+1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 12 إلى 18 منتجاً بديلاً حقيقياً وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
+2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
+3. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
+4. اذكر السعر التقريبي للمنتج البديل، ونسبة أو درجة التشابه مع المنتج المطلوب.
 
-      🚨 قواعد صارمة جداً وحاسمة بخصوص الروابط (exactUrl):
-      - 🚫 يمنع منعاً باتاً اقتراح أي خيار أو منتج لا يحتوي على رابط مباشر لصفحة المنتج في نتائج البحث الحقيقية. كل بديل تقترحه يجب أن يشتمل على رابط مباشر ومؤكد. لا تقترح أبداً أي منتج بدون رابط مباشر.
-      - 🚫 ممنوع منعاً باتاً اختراع أي رابط أو تخمينه أو بناؤه يدوياً أو تعديله حتى لو بدا منطقياً أو متوقعاً.
-      - ✅ يجب أخذ الرابط (exactUrl) حرفياً وبكل رموزه وحروفه كما ظهر في نتائج بحث جوجل الحقيقية المرتجعة من الأداة فقط.
-      - 🚫 يجب أن يوجه الرابط إلى صفحة المنتج البديل مباشرة وليس الصفحة الرئيسية للموقع أو المتجر.
-      - لا تقترح نفس المتجر (مثل أمازون أو غيره) أكثر من مرة واحدة في قائمة البدائل، إلا إذا طلب المستخدم ذلك صراحة. يجب تنويع المتاجر ومواقع البيع في النتائج المعروضة لتقديم أفضل خيارات ممكنة للمستخدم.
+اللغة المطلوبة للرد: ${cleanLanguage}.`;
 
-      قواعد إضافية لباقي الحقول:
-      - message: استخدم هذا الحقل للرد على المستخدم إذا كان سؤاله غير متعلق بمنتج، أو لسؤاله عن توضيحات إضافية إذا كان طلبه غير واضح.
-      - name: اسم المنتج البديل.
-      - price: السعر التقريبي الفعلي الذي وجدته في بحثك (مثال: "$50" أو "200 ريال"). إذا لم تجد سعراً، استخدم "-".
-      - store: اسم الموقع أو المتجر الحقيقي الذي يبيع المنتج.
-      - description: لماذا هو بديل جيد (سبب مختصر ومقنع).
-      - searchKey: الكلمة المفتاحية للبحث باللغة الإنجليزية بدون إضافات.
-      - similarity: مدى التشابه.
-      - imageUrl: رابط صالح ومباشر لصورة المنتج البديل من نتائج البحث، أو اتركه فارغاً إذا لم تجد.
-      
-      Language for UI text fields: ${cleanLanguage}.`,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            message: { type: Type.STRING },
-            alternatives: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  store: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  searchKey: { type: Type.STRING },
-                  price: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  similarity: { type: Type.STRING },
-                  exactUrl: { 
-                    type: Type.STRING, 
-                    description: "The EXACT direct product URL taken LITERALLY from Google Search results. STRICTLY FORBIDDEN to invent, guess, or manually build. Must be empty string '' if no exact direct URL is found in the search results." 
-                  },
-                  imageUrl: { type: Type.STRING, description: "A valid absolute URL for a relevant product image." }
-                },
-                required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
-              }
-            }
-          },
-          required: ["alternatives"]
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        message: { type: Type.STRING },
+        alternatives: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              store: { type: Type.STRING },
+              name: { type: Type.STRING },
+              searchKey: { type: Type.STRING },
+              price: { type: Type.STRING },
+              description: { type: Type.STRING },
+              similarity: { type: Type.STRING },
+              exactUrl: { type: Type.STRING },
+              imageUrl: { type: Type.STRING }
+            },
+            required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
+          }
         }
-      }
-    });
+      },
+      required: ["alternatives"]
+    };
 
-    const text = response.text;
-    if (!text) {
-      return res.json({ alternatives: [], message: "" });
+    let generatedText: string | null = null;
+    let lastError: any = null;
+
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema,
+          },
+        });
+        if (response.text) {
+          generatedText = response.text;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${model} failed, trying next candidate...`, err?.message || err);
+      }
     }
 
-    let cleanText = text.trim();
+    if (!generatedText) {
+      throw lastError || new Error("Unable to generate alternatives at this moment.");
+    }
+
+    let cleanText = generatedText.trim();
     if (cleanText.startsWith("```json")) cleanText = cleanText.substring(7);
     if (cleanText.startsWith("```")) cleanText = cleanText.substring(3);
     if (cleanText.endsWith("```")) cleanText = cleanText.slice(0, -3);
@@ -142,13 +160,16 @@ app.post("/api/search", async (req, res) => {
 
     const parsed = JSON.parse(cleanText);
 
-    // Sanitize all URLs returned by AI
+    // Sanitize URLs and ensure every item has a reliable search/store link
     if (parsed && Array.isArray(parsed.alternatives)) {
-      parsed.alternatives = parsed.alternatives.map((item: any) => ({
-        ...item,
-        exactUrl: sanitizeUrl(item.exactUrl),
-        imageUrl: sanitizeUrl(item.imageUrl)
-      })).filter((item: any) => item.exactUrl !== "");
+      parsed.alternatives = parsed.alternatives.map((item: any) => {
+        const fallbackSearch = `${item.name || ""} ${item.store || ""}`.trim();
+        return {
+          ...item,
+          exactUrl: sanitizeUrl(item.exactUrl, fallbackSearch),
+          imageUrl: sanitizeUrl(item.imageUrl),
+        };
+      }).filter((item: any) => item.exactUrl !== "");
     }
 
     return res.json(parsed);

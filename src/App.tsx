@@ -2240,7 +2240,7 @@ export default function App() {
         }
         
         if (!safeLink || safeLink === "https://") {
-          safeLink = "";
+          safeLink = `https://www.google.com/search?q=${encodeURIComponent((item.searchKey || item.name || searchTerm) + ' ' + (item.store || ''))}`;
         }
         
         return { ...item, link: safeLink, isPromo: false };
