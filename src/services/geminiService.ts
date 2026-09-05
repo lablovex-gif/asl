@@ -7,6 +7,8 @@ export interface ProductAlternative {
   exactUrl: string;
   imageUrl?: string;
   store: string;
+  storeDomain?: string;
+  logoUrl?: string;
   searchKey?: string;
   isPromo?: boolean;
 }

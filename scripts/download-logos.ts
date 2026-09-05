@@ -3,18 +3,33 @@ import path from 'path';
 import https from 'https';
 
 const stores = [
+  { name: 'amazon', domain: 'amazon.com' },
+  { name: 'noon', domain: 'noon.com' },
   { name: 'aliexpress', domain: 'aliexpress.com' },
-  { name: 'alibaba', domain: 'alibaba.com' },
+  { name: 'jarir', domain: 'jarir.com' },
+  { name: 'extra', domain: 'extra.com' },
+  { name: 'ebay', domain: 'ebay.com' },
   { name: 'temu', domain: 'temu.com' },
-  { name: 'zaful', domain: 'zaful.com' },
   { name: 'shein', domain: 'shein.com' },
+  { name: 'alibaba', domain: 'alibaba.com' },
+  { name: 'banggood', domain: 'banggood.com' },
+  { name: 'walmart', domain: 'walmart.com' },
+  { name: 'bestbuy', domain: 'bestbuy.com' },
+  { name: 'apple', domain: 'apple.com' },
+  { name: 'samsung', domain: 'samsung.com' },
+  { name: 'anker', domain: 'anker.com' },
+  { name: 'carrefour', domain: 'carrefour.com' },
+  { name: 'lulu', domain: 'luluhypermarket.com' },
   { name: 'geekbuying', domain: 'geekbuying.com' },
+  { name: 'newegg', domain: 'newegg.com' },
+  { name: 'bhphotovideo', domain: 'bhphotovideo.com' },
+  { name: 'asos', domain: 'asos.com' },
+  { name: 'myprotein', domain: 'myprotein.com' },
+  { name: 'zaful', domain: 'zaful.com' },
   { name: 'tvcmall', domain: 'tvcmall.com' },
   { name: 'gshopper', domain: 'gshopper.com' },
-  { name: 'myprotein', domain: 'myprotein.com' },
   { name: 'lightinthebox', domain: 'lightinthebox.com' },
-  { name: 'miniinthebox', domain: 'miniinthebox.com' },
-  { name: 'asos', domain: 'asos.com' }
+  { name: 'miniinthebox', domain: 'miniinthebox.com' }
 ];
 
 const downloadImage = (url: string, dest: string): Promise<void> => {

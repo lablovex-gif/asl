@@ -74,6 +74,46 @@ const CANDIDATE_MODELS = [
   "gemini-3.8-flash",
 ];
 
+function resolveStoreDomain(store: string, aiDomain?: string): string {
+  if (aiDomain && typeof aiDomain === "string" && aiDomain.includes(".")) {
+    const cleanAiDomain = aiDomain.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "").split("/")[0].trim();
+    if (cleanAiDomain.length > 3 && cleanAiDomain.includes(".")) return cleanAiDomain;
+  }
+
+  const s = (store || "").toLowerCase().trim();
+  if (s.includes("amazon") || s.includes("أمازون")) return "amazon.com";
+  if (s.includes("noon") || s.includes("نون")) return "noon.com";
+  if (s.includes("aliexpress") || s.includes("علي إكسبريس") || s.includes("علي اكسبرس")) return "aliexpress.com";
+  if (s.includes("jarir") || s.includes("جرير")) return "jarir.com";
+  if (s.includes("extra") || s.includes("إكسترا") || s.includes("اكسترا")) return "extra.com";
+  if (s.includes("ebay") || s.includes("إيباي") || s.includes("ايباي")) return "ebay.com";
+  if (s.includes("temu") || s.includes("تيمو")) return "temu.com";
+  if (s.includes("shein") || s.includes("شي إن") || s.includes("شي ان")) return "shein.com";
+  if (s.includes("alibaba") || s.includes("علي بابا")) return "alibaba.com";
+  if (s.includes("banggood") || s.includes("بانجوود")) return "banggood.com";
+  if (s.includes("walmart") || s.includes("وول مارت")) return "walmart.com";
+  if (s.includes("best buy") || s.includes("bestbuy") || s.includes("بست باي")) return "bestbuy.com";
+  if (s.includes("apple") || s.includes("آبل") || s.includes("ابل")) return "apple.com";
+  if (s.includes("samsung") || s.includes("سامسونج")) return "samsung.com";
+  if (s.includes("anker") || s.includes("أنكر")) return "anker.com";
+  if (s.includes("carrefour") || s.includes("كارفور")) return "carrefour.com";
+  if (s.includes("lulu") || s.includes("لولو")) return "luluhypermarket.com";
+  if (s.includes("geekbuying") || s.includes("جيك باينج")) return "geekbuying.com";
+  if (s.includes("newegg") || s.includes("نيوايج")) return "newegg.com";
+  if (s.includes("bhphoto") || s.includes("b&h") || s.includes("بي آند إتش")) return "bhphotovideo.com";
+  if (s.includes("asos") || s.includes("اسوس") || s.includes("أسوس")) return "asos.com";
+  if (s.includes("myprotein") || s.includes("ماي بروتين")) return "myprotein.com";
+  if (s.includes("zaful") || s.includes("زافول")) return "zaful.com";
+  if (s.includes("ikea") || s.includes("ايكيا") || s.includes("إيكيا")) return "ikea.com";
+  if (s.includes("namshi") || s.includes("نمشي")) return "namshi.com";
+  if (s.includes("sivvi") || s.includes("سيفي")) return "sivvi.com";
+  if (s.includes("niceone") || s.includes("نايس ون")) return "niceonesa.com";
+
+  const latinClean = s.replace(/[^a-z0-9]/g, "");
+  if (latinClean.length > 2) return `${latinClean}.com`;
+  return "";
+}
+
 // Secure search endpoint proxying Gemini API calls
 app.post("/api/search", async (req, res) => {
   try {
@@ -95,8 +135,9 @@ app.post("/api/search", async (req, res) => {
 المطلوب:
 1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 12 إلى 18 منتجاً بديلاً حقيقياً وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
 2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
-3. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
-4. اذكر السعر التقريبي للمنتج البديل، ونسبة أو درجة التشابه مع المنتج المطلوب.
+3. استخرج النطاق الإلكتروني الرسمي للمتجر بدقة في حقل storeDomain (مثل: amazon.sa, noon.com, aliexpress.com, jarir.com, extra.com, ebay.com, temu.com, shein.com).
+4. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
+5. اذكر السعر التقريبي للمنتج البديل، ونسبة أو درجة التشابه مع المنتج المطلوب.
 
 اللغة المطلوبة للرد: ${cleanLanguage}.`;
 
@@ -110,13 +151,15 @@ app.post("/api/search", async (req, res) => {
             type: Type.OBJECT,
             properties: {
               store: { type: Type.STRING },
+              storeDomain: { type: Type.STRING },
               name: { type: Type.STRING },
               searchKey: { type: Type.STRING },
               price: { type: Type.STRING },
               description: { type: Type.STRING },
               similarity: { type: Type.STRING },
               exactUrl: { type: Type.STRING },
-              imageUrl: { type: Type.STRING }
+              imageUrl: { type: Type.STRING },
+              logoUrl: { type: Type.STRING }
             },
             required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
           }
@@ -160,12 +203,21 @@ app.post("/api/search", async (req, res) => {
 
     const parsed = JSON.parse(cleanText);
 
-    // Sanitize URLs and ensure every item has a reliable search/store link
+    // Sanitize URLs and ensure every item has a reliable search/store link and logo
     if (parsed && Array.isArray(parsed.alternatives)) {
       parsed.alternatives = parsed.alternatives.map((item: any) => {
         const fallbackSearch = `${item.name || ""} ${item.store || ""}`.trim();
+        const domain = resolveStoreDomain(item.store, item.storeDomain);
+        const resolvedLogoUrl = item.logoUrl && typeof item.logoUrl === "string" && item.logoUrl.startsWith("http")
+          ? item.logoUrl
+          : domain
+            ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
+            : "";
+
         return {
           ...item,
+          storeDomain: domain,
+          logoUrl: resolvedLogoUrl,
           exactUrl: sanitizeUrl(item.exactUrl, fallbackSearch),
           imageUrl: sanitizeUrl(item.imageUrl),
         };

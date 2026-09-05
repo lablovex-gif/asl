@@ -1827,18 +1827,33 @@ const Logo = ({ className }: { className?: string }) => (
 );
 
 const getLocalLogo = (store: string) => {
-  const s = store.toLowerCase().trim();
+  const s = (store || '').toLowerCase().trim();
   
-  if (s.includes('aliexpress') || s.includes('علي اكسبرس') || s.includes('علي إكسبرس')) return 'aliexpress';
-  if (s.includes('alibaba') || s.includes('علي بابا')) return 'alibaba';
+  if (s.includes('amazon') || s.includes('أمازون')) return 'amazon';
+  if (s.includes('noon') || s.includes('نون')) return 'noon';
+  if (s.includes('aliexpress') || s.includes('علي اكسبرس') || s.includes('علي إكسبريس')) return 'aliexpress';
+  if (s.includes('jarir') || s.includes('جرير')) return 'jarir';
+  if (s.includes('extra') || s.includes('إكسترا') || s.includes('اكسترا')) return 'extra';
+  if (s.includes('ebay') || s.includes('إيباي') || s.includes('ايباي')) return 'ebay';
   if (s.includes('temu') || s.includes('تيمو')) return 'temu';
-  if (s.includes('zaful') || s.includes('زافول')) return 'zaful';
   if (s.includes('shein') || s.includes('شي ان') || s.includes('شي إن')) return 'shein';
+  if (s.includes('alibaba') || s.includes('علي بابا')) return 'alibaba';
+  if (s.includes('banggood') || s.includes('بانجوود')) return 'banggood';
+  if (s.includes('walmart') || s.includes('وول مارت')) return 'walmart';
+  if (s.includes('bestbuy') || s.includes('best buy') || s.includes('بست باي')) return 'bestbuy';
+  if (s.includes('apple') || s.includes('آبل') || s.includes('ابل')) return 'apple';
+  if (s.includes('samsung') || s.includes('سامسونج')) return 'samsung';
+  if (s.includes('anker') || s.includes('أنكر')) return 'anker';
+  if (s.includes('carrefour') || s.includes('كارفور')) return 'carrefour';
+  if (s.includes('lulu') || s.includes('لولو')) return 'lulu';
+  if (s.includes('zaful') || s.includes('زافول')) return 'zaful';
   if (s.includes('geekbuying') || s.includes('جيك باينج')) return 'geekbuying';
   if (s.includes('tvc-mall') || s.includes('tvcmall')) return 'tvcmall';
   if (s.includes('gshopper')) return 'gshopper';
   if (s.includes('myprotein') || s.includes('ماي بروتين')) return 'myprotein';
   if (s.includes('asos') || s.includes('اسوس') || s.includes('أسوس')) return 'asos';
+  if (s.includes('newegg') || s.includes('نيوايج')) return 'newegg';
+  if (s.includes('bhphoto') || s.includes('b&h') || s.includes('بي آند إتش')) return 'bhphotovideo';
   
   // Just clean standard domains as fallback
   const clean = s.replace(/[^a-z0-9]/g, '');
@@ -1847,24 +1862,74 @@ const getLocalLogo = (store: string) => {
   return 'default';
 };
 
-const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string, inline?: boolean, fullFrame?: boolean, className?: string }) => {
+const StoreLogo = memo(({ 
+  store, 
+  domain: propDomain, 
+  logoUrl: propLogoUrl, 
+  inline, 
+  fullFrame, 
+  className 
+}: { 
+  store: string; 
+  domain?: string; 
+  logoUrl?: string; 
+  inline?: boolean; 
+  fullFrame?: boolean; 
+  className?: string; 
+}) => {
   const [errorStage, setErrorStage] = useState(0); 
-  // 0: Try local, 1: Try Clearbit, 2: Try Google Favicon, 3: Error
+  // 0: Local/AI logo, 1: Google Favicon (128px), 2: DuckDuckGo, 3: Fallback Badge
   
   const name = getLocalLogo(store);
-  const isSquare = ['aliexpress', 'temu', 'myprotein', 'banggood', 'asos'].includes(name);
+  const isSquare = ['aliexpress', 'temu', 'myprotein', 'banggood', 'asos', 'noon', 'amazon'].includes(name);
 
-  // Try to infer a standard domain from the store name
-  const cleanStore = store.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const domain = cleanStore.length > 2 ? `${cleanStore}.com` : null;
+  // Inferred or provided domain
+  let domain = propDomain;
+  if (!domain || domain.trim() === '') {
+    if (name !== 'default') {
+      const domainMap: Record<string, string> = {
+        amazon: 'amazon.com',
+        noon: 'noon.com',
+        aliexpress: 'aliexpress.com',
+        jarir: 'jarir.com',
+        extra: 'extra.com',
+        ebay: 'ebay.com',
+        temu: 'temu.com',
+        shein: 'shein.com',
+        alibaba: 'alibaba.com',
+        banggood: 'banggood.com',
+        walmart: 'walmart.com',
+        bestbuy: 'bestbuy.com',
+        apple: 'apple.com',
+        samsung: 'samsung.com',
+        anker: 'anker.com',
+        carrefour: 'carrefour.com',
+        lulu: 'luluhypermarket.com',
+        geekbuying: 'geekbuying.com',
+        newegg: 'newegg.com',
+        bhphotovideo: 'bhphotovideo.com',
+        asos: 'asos.com',
+        myprotein: 'myprotein.com',
+        zaful: 'zaful.com',
+        tvcmall: 'tvcmall.com',
+        gshopper: 'gshopper.com'
+      };
+      domain = domainMap[name] || `${name}.com`;
+    } else {
+      const cleanStore = store.toLowerCase().replace(/[^a-z0-9]/g, '');
+      domain = cleanStore.length > 2 ? `${cleanStore}.com` : undefined;
+    }
+  }
 
-  if (errorStage === 3 || (!domain && name === 'default')) {
+  if (errorStage >= 3 || (!domain && name === 'default' && !propLogoUrl)) {
     if (inline) return <Store size={12} className={className} />;
     if (fullFrame) {
       return (
-        <div className={`w-full h-full flex flex-col items-center justify-center text-muted-foreground opacity-60 ${className || ''}`}>
-          <Store size={28} className="mb-2" />
-          <span className="text-xs">{store}</span>
+        <div className={`w-full h-full flex flex-col items-center justify-center text-muted-foreground opacity-75 ${className || ''}`}>
+          <div className="w-10 h-10 rounded-full bg-muted/60 flex items-center justify-center mb-1 font-bold text-xs uppercase tracking-wider text-foreground/80">
+            {store ? store.slice(0, 2) : '🛒'}
+          </div>
+          <span className="text-[11px] font-medium truncate max-w-[90px]">{store}</span>
         </div>
       );
     }
@@ -1872,14 +1937,19 @@ const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string
   }
 
   const getImgSrc = () => {
-    if (errorStage === 0 && name !== 'default') {
-      return `/logos/${name}.png`;
+    if (errorStage === 0) {
+      if (name !== 'default') {
+        return `/logos/${name}.png`;
+      }
+      if (propLogoUrl && propLogoUrl.startsWith('http')) {
+        return propLogoUrl;
+      }
     }
     if (errorStage <= 1 && domain) {
-      return `https://logo.clearbit.com/${domain}`;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
     }
     if (errorStage <= 2 && domain) {
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+      return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
     }
     return '';
   };
@@ -1890,9 +1960,11 @@ const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string
     if (inline) return <Store size={12} className={className} />;
     if (fullFrame) {
       return (
-        <div className={`w-full h-full flex flex-col items-center justify-center text-muted-foreground opacity-60 ${className || ''}`}>
-          <Store size={28} className="mb-2" />
-          <span className="text-xs">{store}</span>
+        <div className={`w-full h-full flex flex-col items-center justify-center text-muted-foreground opacity-75 ${className || ''}`}>
+          <div className="w-10 h-10 rounded-full bg-muted/60 flex items-center justify-center mb-1 font-bold text-xs uppercase tracking-wider text-foreground/80">
+            {store ? store.slice(0, 2) : '🛒'}
+          </div>
+          <span className="text-[11px] font-medium truncate max-w-[90px]">{store}</span>
         </div>
       );
     }
@@ -1904,8 +1976,9 @@ const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string
       <img 
         src={imgSrc}
         alt={store} 
-        className={`w-3.5 h-3.5 object-contain ${className || ''} ${!isSquare ? 'mix-blend-multiply dark:mix-blend-normal' : ''} dark:bg-white/90 dark:p-0.5 dark:rounded`}
+        className={`w-3.5 h-3.5 object-contain ${className || ''} dark:bg-white/90 dark:p-0.5 dark:rounded`}
         onError={() => setErrorStage(prev => prev + 1)} 
+        loading="lazy"
       />
     );
   }
@@ -1916,8 +1989,9 @@ const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string
         <img 
           src={imgSrc}
           alt={store} 
-          className={`w-full h-full max-w-[100px] max-h-[100px] object-contain opacity-90 dark:opacity-100 ${!isSquare ? 'mix-blend-multiply dark:mix-blend-normal' : ''} transition-transform duration-300`}
+          className="w-full h-full max-w-[80px] max-h-[80px] object-contain opacity-95 transition-transform duration-300 hover:scale-110 drop-shadow-xs"
           onError={() => setErrorStage(prev => prev + 1)} 
+          loading="lazy"
         />
       </div>
     );
@@ -1928,8 +2002,9 @@ const StoreLogo = memo(({ store, inline, fullFrame, className }: { store: string
       <img 
         src={imgSrc}
         alt={store} 
-        className={`w-full h-full object-contain ${!isSquare ? 'mix-blend-multiply dark:mix-blend-normal' : ''} transition-transform duration-300`}
+        className="w-full h-full object-contain transition-transform duration-300"
         onError={() => setErrorStage(prev => prev + 1)} 
+        loading="lazy"
       />
     </div>
   );
@@ -2742,11 +2817,17 @@ export default function App() {
                                                 loading="lazy"
                                                 referrerPolicy="no-referrer"
                                                 onError={(e) => {
-                                                  (e.target as HTMLImageElement).src = `https://placehold.co/100x100/png?text=${encodeURIComponent(item.store)}`;
+                                                  (e.target as HTMLImageElement).src = item.logoUrl || `https://www.google.com/s2/favicons?domain=${encodeURIComponent(item.storeDomain || item.store)}&sz=128`;
                                                 }}
                                               />
                                             ) : (
-                                              <StoreLogo store={item.store} fullFrame className="p-1.5" />
+                                              <StoreLogo 
+                                                store={item.store} 
+                                                domain={item.storeDomain} 
+                                                logoUrl={item.logoUrl} 
+                                                fullFrame 
+                                                className="p-1.5" 
+                                              />
                                             )}
                                           </div>
 
@@ -2754,7 +2835,7 @@ export default function App() {
                                           <div className="flex flex-col gap-1.5 mb-2">
                                             <div className={`flex flex-wrap gap-1 ${t.dir === "rtl" ? "justify-end" : "justify-start"}`}>
                                               <Badge className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold items-center whitespace-nowrap shadow-xs flex ${badgeStyle}`}>
-                                                <Store size={8} className={t.dir === "rtl" ? "ml-0.5" : "mr-0.5"} />
+                                                <StoreLogo store={item.store} domain={item.storeDomain} logoUrl={item.logoUrl} inline className={t.dir === "rtl" ? "ml-1" : "mr-1"} />
                                                 <span>{isExact ? item.store : isPromo ? (currentLang === "العربية" ? "عرض خاص" : "Special Deal") : item.store}</span>
                                               </Badge>
                                               {isGeekbuying && (
