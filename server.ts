@@ -43,15 +43,113 @@ function sanitizeUrl(rawUrl: string, fallbackQuery?: string): string {
   return "";
 }
 
-let aiClient: GoogleGenAI | null = null;
-function getAIClient(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured.");
+interface AIConfig {
+  provider: "gemini" | "openai" | "groq" | "deepseek" | "openrouter" | "anthropic" | "mistral" | "openai-compatible";
+  apiKey: string;
+  customBaseUrl?: string;
+  customModel?: string;
+}
+
+function getAIConfig(): AIConfig {
+  const env = process.env;
+  let apiKey = "";
+  let provider = "";
+  const customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
+  const customModel = env.AI_MODEL || env.OPENAI_MODEL || env.GEMINI_MODEL;
+
+  const systemVars = new Set([
+    "PATH", "PWD", "HOME", "SHELL", "USER", "HOSTNAME", "PORT", "NODE_ENV", "TERM", "SHLVL", "_", "LANG",
+    "DISABLE_HMR", "APP_URL", "K_SERVICE", "K_REVISION", "K_CONFIGURATION", "LS_COLORS", "COLORTERM"
+  ]);
+
+  // Priority 1: Check provider-suggestive names
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
+    const val = v.trim();
+    if (val.length < 18 || val.length > 400 || val.startsWith("/") || val.startsWith("http://") || val.startsWith("https://") || val.startsWith("{")) continue;
+
+    const kUpper = k.toUpperCase();
+    if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) {
+      apiKey = val; provider = "openai"; break;
+    } else if (kUpper.includes("GROQ")) {
+      apiKey = val; provider = "groq"; break;
+    } else if (kUpper.includes("DEEPSEEK")) {
+      apiKey = val; provider = "deepseek"; break;
+    } else if (kUpper.includes("OPENROUTER")) {
+      apiKey = val; provider = "openrouter"; break;
+    } else if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) {
+      apiKey = val; provider = "anthropic"; break;
+    } else if (kUpper.includes("MISTRAL")) {
+      apiKey = val; provider = "mistral"; break;
+    } else if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) {
+      apiKey = val; provider = "gemini"; break;
     }
+  }
+
+  // Priority 2: Check ANY variable value for known key signatures
+  if (!apiKey) {
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
+      const val = v.trim();
+      if (val.startsWith("AIzaSy")) {
+        apiKey = val; provider = "gemini"; break;
+      } else if (val.startsWith("gsk_")) {
+        apiKey = val; provider = "groq"; break;
+      } else if (val.startsWith("sk-or-")) {
+        apiKey = val; provider = "openrouter"; break;
+      } else if (val.startsWith("sk-ant-")) {
+        apiKey = val; provider = "anthropic"; break;
+      } else if (val.startsWith("sk-proj-") || val.startsWith("sk-")) {
+        apiKey = val; provider = "openai"; break;
+      }
+    }
+  }
+
+  // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token (name doesn't matter!)
+  if (!apiKey) {
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
+      const val = v.trim();
+      if (val.length >= 20 && val.length <= 300 && !val.includes(" ") && !val.startsWith("/") && !val.includes("://")) {
+        apiKey = val;
+        break;
+      }
+    }
+  }
+
+  apiKey = (apiKey || "").trim();
+
+  if (apiKey && !provider) {
+    if (apiKey.startsWith("AIzaSy")) {
+      provider = "gemini";
+    } else if (apiKey.startsWith("gsk_")) {
+      provider = "groq";
+    } else if (apiKey.startsWith("sk-or-")) {
+      provider = "openrouter";
+    } else if (apiKey.startsWith("sk-ant-")) {
+      provider = "anthropic";
+    } else if (customBaseUrl) {
+      provider = "openai-compatible";
+    } else if (apiKey.startsWith("sk-")) {
+      provider = "openai";
+    } else {
+      provider = "gemini";
+    }
+  }
+
+  return {
+    provider: (provider || "gemini") as any,
+    apiKey,
+    customBaseUrl,
+    customModel
+  };
+}
+
+let aiClient: GoogleGenAI | null = null;
+function getAIClient(apiKey: string): GoogleGenAI {
+  if (!aiClient) {
     aiClient = new GoogleGenAI({
-      apiKey,
+      apiKey: apiKey.trim(),
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
@@ -126,7 +224,13 @@ app.post("/api/search", async (req, res) => {
     const cleanProductName = productName.trim().substring(0, 500);
     const cleanLanguage = typeof language === "string" ? language.trim().substring(0, 50) : "العربية";
 
-    const ai = getAIClient();
+    const aiConfig = getAIConfig();
+    if (!aiConfig.apiKey) {
+      return res.status(500).json({
+        error: "AI API Key is not configured.",
+        details: "Please set an API key for Gemini, OpenAI, Groq, DeepSeek, OpenRouter, Anthropic, or any AI in your environment variables or Secrets panel."
+      });
+    }
 
     const prompt = `أنت مساعد ذكي متخصص في إيجاد بدائل حقيقية وممتازة وأرخص للمنتجات.
 
@@ -141,53 +245,159 @@ app.post("/api/search", async (req, res) => {
 
 اللغة المطلوبة للرد: ${cleanLanguage}.`;
 
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        message: { type: Type.STRING },
-        alternatives: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              store: { type: Type.STRING },
-              storeDomain: { type: Type.STRING },
-              name: { type: Type.STRING },
-              searchKey: { type: Type.STRING },
-              price: { type: Type.STRING },
-              description: { type: Type.STRING },
-              similarity: { type: Type.STRING },
-              exactUrl: { type: Type.STRING },
-              imageUrl: { type: Type.STRING },
-              logoUrl: { type: Type.STRING }
-            },
-            required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
-          }
-        }
-      },
-      required: ["alternatives"]
-    };
-
     let generatedText: string | null = null;
     let lastError: any = null;
 
-    for (const model of CANDIDATE_MODELS) {
+    if (aiConfig.provider === "gemini") {
+      const ai = getAIClient(aiConfig.apiKey);
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          message: { type: Type.STRING },
+          alternatives: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                store: { type: Type.STRING },
+                storeDomain: { type: Type.STRING },
+                name: { type: Type.STRING },
+                searchKey: { type: Type.STRING },
+                price: { type: Type.STRING },
+                description: { type: Type.STRING },
+                similarity: { type: Type.STRING },
+                exactUrl: { type: Type.STRING },
+                imageUrl: { type: Type.STRING },
+                logoUrl: { type: Type.STRING }
+              },
+              required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
+            }
+          }
+        },
+        required: ["alternatives"]
+      };
+
+      const candidateModels = aiConfig.customModel ? [aiConfig.customModel] : CANDIDATE_MODELS;
+
+      for (const model of candidateModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema,
+            },
+          });
+          if (response.text) {
+            generatedText = response.text;
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`Model ${model} failed, trying next candidate...`, err?.message || err);
+        }
+      }
+    } else if (aiConfig.provider === "anthropic") {
+      const model = aiConfig.customModel || "claude-3-5-haiku-20241022";
       try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema,
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": aiConfig.apiKey,
+            "anthropic-version": "2023-06-01"
           },
+          body: JSON.stringify({
+            model,
+            max_tokens: 4096,
+            system: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown blocks or any text before or after the JSON.",
+            messages: [{ role: "user", content: prompt }]
+          })
         });
-        if (response.text) {
-          generatedText = response.text;
-          break;
+
+        if (response.ok) {
+          const data: any = await response.json();
+          if (data?.content?.[0]?.text) {
+            generatedText = data.content[0].text;
+          }
+        } else {
+          const errBody = await response.text();
+          lastError = new Error(`Anthropic error [${response.status}]: ${errBody}`);
         }
       } catch (err: any) {
         lastError = err;
-        console.warn(`Model ${model} failed, trying next candidate...`, err?.message || err);
+      }
+    } else {
+      // OpenAI and OpenAI-compatible (Groq, DeepSeek, OpenRouter, Mistral, Custom)
+      let endpoint = "https://api.openai.com/v1/chat/completions";
+      let candidateModels = ["gpt-4o-mini", "gpt-4o"];
+      const extraHeaders: Record<string, string> = {};
+
+      if (aiConfig.provider === "groq") {
+        endpoint = "https://api.groq.com/openai/v1/chat/completions";
+        candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+      } else if (aiConfig.provider === "deepseek") {
+        endpoint = "https://api.deepseek.com/chat/completions";
+        candidateModels = ["deepseek-chat"];
+      } else if (aiConfig.provider === "openrouter") {
+        endpoint = "https://openrouter.ai/api/v1/chat/completions";
+        candidateModels = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"];
+        extraHeaders["HTTP-Referer"] = "https://pezeex.com";
+        extraHeaders["X-Title"] = "Pezeex";
+      } else if (aiConfig.provider === "mistral") {
+        endpoint = "https://api.mistral.ai/v1/chat/completions";
+        candidateModels = ["mistral-small-latest", "open-mistral-nemo"];
+      }
+
+      if (aiConfig.customBaseUrl) {
+        endpoint = aiConfig.customBaseUrl.replace(/\/+$/, "");
+        if (!endpoint.includes("/chat/completions")) {
+          endpoint += "/chat/completions";
+        }
+      }
+      if (aiConfig.customModel) {
+        candidateModels = [aiConfig.customModel];
+      }
+
+      for (const model of candidateModels) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${aiConfig.apiKey}`,
+              ...extraHeaders
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                {
+                  role: "system",
+                  content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+                },
+                {
+                  role: "user",
+                  content: prompt
+                }
+              ],
+              response_format: { type: "json_object" }
+            })
+          });
+
+          if (response.ok) {
+            const data: any = await response.json();
+            if (data?.choices?.[0]?.message?.content) {
+              generatedText = data.choices[0].message.content;
+              break;
+            }
+          } else {
+            const errBody = await response.text();
+            lastError = new Error(`AI Provider [${response.status}]: ${errBody}`);
+          }
+        } catch (err: any) {
+          lastError = err;
+        }
       }
     }
 

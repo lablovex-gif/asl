@@ -2343,17 +2343,29 @@ export default function App() {
         { type: "user", content: currentQuery },
         { type: "ai", content: mappedResponse }
       ]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Search error:", error);
       isSearchFinishingRef.current = true;
       await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const rawErrMsg = error?.message || "";
+      let userNotice = t.noResults || "Unable to fetch alternatives right now. Please try again.";
+
+      if (rawErrMsg.toLowerCase().includes("api key") || rawErrMsg.toLowerCase().includes("not configured")) {
+        userNotice = `تنبيه في الخادم: لم يتم التعرف على مفتاح الـ API. يرجى التأكد من وضع المفتاح في ملف .env أو config.php على الاستضافة. (يمكنك فحص الحالة عبر رابط /api/health.php)`;
+      } else if (rawErrMsg.toLowerCase().includes("reach search api") || rawErrMsg.toLowerCase().includes("404")) {
+        userNotice = `تعذر الاتصال بملف البحث الذكي (404 Not Found). تأكد من رفع مجلد api/search.php داخل مسار الموقع على الاستضافة.`;
+      } else if (rawErrMsg) {
+        userNotice = `${t.noResults || "لم نتمكن من جلب البدائل حالياً."} (${rawErrMsg})`;
+      }
+
       setHistory([
         { type: "user", content: currentQuery },
         { 
           type: "ai", 
           content: { 
             alternatives: [], 
-            message: t.noResults || "Unable to fetch alternatives right now. Please try again." 
+            message: userNotice
           } as ProductsResponse 
         }
       ]);

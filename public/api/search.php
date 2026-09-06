@@ -20,61 +20,169 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// 1. Resolve API Key from multiple sources
-function getApiKey() {
-    // Check environment variables
-    $keys = [
-        'GEMINI_API_KEY',
-        'VITE_GEMINI_API_KEY',
-        'REDIRECT_GEMINI_API_KEY',
-        'REDIRECT_VITE_GEMINI_API_KEY'
-    ];
-    
-    foreach ($keys as $k) {
-        if (!empty($_ENV[$k])) return trim($_ENV[$k]);
-        if (!empty($_SERVER[$k])) return trim($_SERVER[$k]);
-        $val = getenv($k);
-        if (!empty($val)) return trim($val);
+// 1. Resolve AI Provider and Key flexibly from multiple sources and formats
+function detectAIConfig() {
+    $env = [];
+
+    // Method A: getenv()
+    if (function_exists('getenv')) {
+        $g = getenv();
+        if (is_array($g)) $env = array_merge($env, $g);
     }
 
-    // Check config.php if exists
-    $configFile = __DIR__ . '/config.php';
-    if (file_exists($configFile)) {
-        $config = include $configFile;
-        if (is_array($config) && !empty($config['GEMINI_API_KEY'])) {
-            return trim($config['GEMINI_API_KEY']);
-        }
-    }
+    // Method B: $_SERVER and $_ENV
+    $env = array_merge($env, $_SERVER ?? [], $_ENV ?? []);
 
-    // Check .env file in root or parent directories
+    // Also read .env if available
     $envPaths = [
         __DIR__ . '/.env',
         dirname(__DIR__) . '/.env',
-        dirname(dirname(__DIR__)) . '/.env'
+        dirname(dirname(__DIR__)) . '/.env',
+        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env',
+        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/public_html/.env',
+        dirname($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env'
     ];
-
-    foreach ($envPaths as $envPath) {
-        if (file_exists($envPath) && is_readable($envPath)) {
-            $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($envPaths as $p) {
+        if (!empty($p) && file_exists($p) && is_readable($p)) {
+            $lines = file($p, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
             foreach ($lines as $line) {
                 $line = trim($line);
                 if (empty($line) || $line[0] === '#') continue;
-                if (preg_match('/^(?:VITE_)?GEMINI_API_KEY\s*=\s*["\']?([^"\']+)["\']?/', $line, $m)) {
-                    return trim($m[1]);
+                if (preg_match('/^([A-Za-z0-9_]+)\s*=\s*["\']?([^"\']+)["\']?/', $line, $m)) {
+                    $env[$m[1]] = trim($m[2]);
                 }
             }
         }
     }
 
-    return null;
+    // Also check config.php
+    $configFiles = [
+        __DIR__ . '/config.php',
+        dirname(__DIR__) . '/config.php',
+        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/api/config.php',
+        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/config.php'
+    ];
+    foreach ($configFiles as $configFile) {
+        if (!empty($configFile) && file_exists($configFile)) {
+            $c = include $configFile;
+            if (is_array($c)) {
+                foreach ($c as $k => $v) {
+                    if (is_string($v)) $env[$k] = trim($v);
+                }
+            }
+        }
+    }
+
+    $apiKey = '';
+    $provider = '';
+    $customBaseUrl = $env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? null;
+    $customModel = $env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? $env['GEMINI_MODEL'] ?? null;
+
+    $systemVars = [
+        'PATH', 'PWD', 'HOME', 'SHELL', 'USER', 'HOSTNAME', 'PORT', 'NODE_ENV', 'TERM', 'SHLVL', '_', 'LANG',
+        'DOCUMENT_ROOT', 'SERVER_SOFTWARE', 'SERVER_NAME', 'SERVER_ADDR', 'SERVER_PORT', 'REMOTE_ADDR',
+        'SCRIPT_FILENAME', 'SERVER_ADMIN', 'CONTEXT_DOCUMENT_ROOT', 'REQUEST_SCHEME', 'GATEWAY_INTERFACE',
+        'SERVER_PROTOCOL', 'REQUEST_METHOD', 'QUERY_STRING', 'REQUEST_URI', 'SCRIPT_NAME', 'PHP_SELF',
+        'REQUEST_TIME_FLOAT', 'REQUEST_TIME', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_ACCEPT', 'DISABLE_HMR',
+        'APP_URL', 'K_SERVICE', 'K_REVISION', 'K_CONFIGURATION', 'LS_COLORS', 'COLORTERM'
+    ];
+
+    // Priority 1: Check known names or any variable with key/token/secret
+    foreach ($env as $k => $v) {
+        if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
+        $val = trim($v);
+        if (strlen($val) < 18 || strlen($val) > 400) continue;
+        // Ignore file paths, URLs, JSON objects
+        if ($val[0] === '/' || strpos($val, 'http://') === 0 || strpos($val, 'https://') === 0 || $val[0] === '{') continue;
+
+        $kUpper = strtoupper($k);
+        if (strpos($kUpper, 'OPENAI') !== false || strpos($kUpper, 'CHATGPT') !== false) {
+            $apiKey = $val; $provider = 'openai'; break;
+        } elseif (strpos($kUpper, 'GROQ') !== false) {
+            $apiKey = $val; $provider = 'groq'; break;
+        } elseif (strpos($kUpper, 'DEEPSEEK') !== false) {
+            $apiKey = $val; $provider = 'deepseek'; break;
+        } elseif (strpos($kUpper, 'OPENROUTER') !== false) {
+            $apiKey = $val; $provider = 'openrouter'; break;
+        } elseif (strpos($kUpper, 'ANTHROPIC') !== false || strpos($kUpper, 'CLAUDE') !== false) {
+            $apiKey = $val; $provider = 'anthropic'; break;
+        } elseif (strpos($kUpper, 'MISTRAL') !== false) {
+            $apiKey = $val; $provider = 'mistral'; break;
+        } elseif (strpos($kUpper, 'GEMINI') !== false || strpos($kUpper, 'GOOGLE') !== false) {
+            $apiKey = $val; $provider = 'gemini'; break;
+        }
+    }
+
+    // Priority 2: If no provider-specific name matched, search ALL variables for known key signatures
+    if (empty($apiKey)) {
+        foreach ($env as $k => $v) {
+            if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
+            $val = trim($v);
+            if (strpos($val, 'AIzaSy') === 0) {
+                $apiKey = $val; $provider = 'gemini'; break;
+            } elseif (strpos($val, 'gsk_') === 0) {
+                $apiKey = $val; $provider = 'groq'; break;
+            } elseif (strpos($val, 'sk-or-') === 0) {
+                $apiKey = $val; $provider = 'openrouter'; break;
+            } elseif (strpos($val, 'sk-ant-') === 0) {
+                $apiKey = $val; $provider = 'anthropic'; break;
+            } elseif (strpos($val, 'sk-proj-') === 0 || strpos($val, 'sk-') === 0) {
+                $apiKey = $val; $provider = 'openai'; break;
+            }
+        }
+    }
+
+    // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token (regardless of name!)
+    if (empty($apiKey)) {
+        foreach ($env as $k => $v) {
+            if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
+            $val = trim($v);
+            // Must be between 20 and 300 characters, no spaces, not a URL, not a file path
+            if (strlen($val) >= 20 && strlen($val) <= 300 && strpos($val, ' ') === false && $val[0] !== '/' && strpos($val, '://') === false) {
+                $apiKey = $val;
+                break;
+            }
+        }
+    }
+
+    // Auto-detect provider based on key format or base URL if not already determined
+    if (!empty($apiKey) && empty($provider)) {
+        if (strpos($apiKey, 'AIzaSy') === 0) {
+            $provider = 'gemini';
+        } elseif (strpos($apiKey, 'gsk_') === 0) {
+            $provider = 'groq';
+        } elseif (strpos($apiKey, 'sk-or-') === 0) {
+            $provider = 'openrouter';
+        } elseif (strpos($apiKey, 'sk-ant-') === 0) {
+            $provider = 'anthropic';
+        } elseif (!empty($customBaseUrl)) {
+            $provider = 'openai-compatible';
+        } elseif (strpos($apiKey, 'sk-') === 0) {
+            $provider = 'openai';
+        } else {
+            $provider = 'gemini';
+        }
+    }
+
+    return [
+        'apiKey' => trim($apiKey),
+        'provider' => $provider ?: 'gemini',
+        'customBaseUrl' => $customBaseUrl,
+        'customModel' => $customModel
+    ];
 }
 
-$apiKey = getApiKey();
+$aiConfig = detectAIConfig();
+$apiKey = $aiConfig['apiKey'];
+$aiProvider = $aiConfig['provider'];
+$customBaseUrl = $aiConfig['customBaseUrl'];
+$customModel = $aiConfig['customModel'];
+
 if (empty($apiKey)) {
     http_response_code(500);
     echo json_encode([
-        'error' => 'GEMINI_API_KEY is not configured.',
-        'details' => 'Please set GEMINI_API_KEY in Hostinger environment variables, in .env, or in api/config.php'
+        'error' => 'No AI API Key is configured.',
+        'details' => 'Please set an API key for Gemini, OpenAI, Groq, DeepSeek, OpenRouter, Anthropic, or any AI in your environment variables, .env, or api/config.php'
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -188,63 +296,198 @@ $schema = [
     'required' => ['alternatives']
 ];
 
-$payload = [
-    'contents' => [
-        [
-            'parts' => [
-                ['text' => $prompt]
-            ]
-        ]
-    ],
-    'generationConfig' => [
-        'responseMimeType' => 'application/json',
-        'responseSchema' => $schema
-    ]
-];
-
-$candidateModels = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-3.8-flash'
-];
-
 $responseJson = null;
 $lastError = null;
 
-foreach ($candidateModels as $model) {
-    $apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
-    
-    $ch = curl_init($apiUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode($payload),
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 45,
-        CURLOPT_SSL_VERIFYPEER => true
-    ]);
+function safeHttpPost($url, $headers, $postBodyJson) {
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $postBodyJson,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 45,
+            CURLOPT_SSL_VERIFYPEER => true
+        ]);
+        $result = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
 
-    $result = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    curl_close($ch);
+        // If SSL certificate problem (common on shared hosting), retry with verify false
+        if ($result === false && (strpos($curlError, 'SSL') !== false || strpos($curlError, 'certificate') !== false)) {
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            $result = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+        }
+        curl_close($ch);
+        return [$httpCode, $result, $curlError];
+    }
+
+    // Stream context fallback
+    $opts = [
+        'http' => [
+            'method' => 'POST',
+            'header' => implode("\r\n", $headers),
+            'content' => $postBodyJson,
+            'timeout' => 45,
+            'ignore_errors' => true
+        ],
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false
+        ]
+    ];
+    $ctx = stream_context_create($opts);
+    $result = @file_get_contents($url, false, $ctx);
+    $httpCode = 500;
+    if (isset($http_response_header) && preg_match('/HTTP\/\S+\s+(\d+)/', $http_response_header[0], $m)) {
+        $httpCode = (int)$m[1];
+    }
+    return [$httpCode, $result, $result === false ? 'file_get_contents failed' : ''];
+}
+
+// 4. Dispatch to the appropriate AI provider
+if ($aiProvider === 'gemini') {
+    $payload = [
+        'contents' => [
+            [
+                'parts' => [
+                    ['text' => $prompt]
+                ]
+            ]
+        ],
+        'generationConfig' => [
+            'responseMimeType' => 'application/json',
+            'responseSchema' => $schema
+        ]
+    ];
+
+    $candidateModels = !empty($customModel) ? [$customModel] : [
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-3.8-flash'
+    ];
+
+    foreach ($candidateModels as $model) {
+        $apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
+        list($httpCode, $result, $curlError) = safeHttpPost($apiUrl, ['Content-Type: application/json'], json_encode($payload));
+
+        if ($httpCode === 200 && !empty($result)) {
+            $apiDecoded = json_decode($result, true);
+            if (!empty($apiDecoded['candidates'][0]['content']['parts'][0]['text'])) {
+                $responseJson = $apiDecoded['candidates'][0]['content']['parts'][0]['text'];
+                break;
+            }
+        } else {
+            $lastError = "Gemini ($model) error [HTTP $httpCode]: " . substr($result, 0, 300) . " $curlError";
+        }
+    }
+} elseif ($aiProvider === 'anthropic') {
+    $apiUrl = "https://api.anthropic.com/v1/messages";
+    $model = !empty($customModel) ? $customModel : "claude-3-5-haiku-20241022";
+
+    $payload = [
+        'model' => $model,
+        'max_tokens' => 4096,
+        'system' => "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown blocks or any text before or after the JSON.",
+        'messages' => [
+            ['role' => 'user', 'content' => $prompt]
+        ]
+    ];
+
+    list($httpCode, $result, $curlError) = safeHttpPost(
+        $apiUrl,
+        [
+            'Content-Type: application/json',
+            'x-api-key: ' . $apiKey,
+            'anthropic-version: 2023-06-01'
+        ],
+        json_encode($payload)
+    );
 
     if ($httpCode === 200 && !empty($result)) {
         $apiDecoded = json_decode($result, true);
-        if (!empty($apiDecoded['candidates'][0]['content']['parts'][0]['text'])) {
-            $responseJson = $apiDecoded['candidates'][0]['content']['parts'][0]['text'];
-            break;
+        if (!empty($apiDecoded['content'][0]['text'])) {
+            $responseJson = $apiDecoded['content'][0]['text'];
         }
     } else {
-        $lastError = "Model $model returned HTTP $httpCode: $result $curlError";
+        $lastError = "Anthropic error [HTTP $httpCode]: " . substr($result, 0, 300) . " $curlError";
+    }
+} else {
+    // OpenAI and OpenAI-compatible providers (Groq, DeepSeek, OpenRouter, Mistral, Local/Custom)
+    $endpoint = "https://api.openai.com/v1/chat/completions";
+    $candidateModels = ["gpt-4o-mini", "gpt-4o"];
+    $extraHeaders = [];
+
+    if ($aiProvider === 'groq') {
+        $endpoint = "https://api.groq.com/openai/v1/chat/completions";
+        $candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+    } elseif ($aiProvider === 'deepseek') {
+        $endpoint = "https://api.deepseek.com/chat/completions";
+        $candidateModels = ["deepseek-chat"];
+    } elseif ($aiProvider === 'openrouter') {
+        $endpoint = "https://openrouter.ai/api/v1/chat/completions";
+        $candidateModels = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"];
+        $extraHeaders[] = "HTTP-Referer: https://pezeex.com";
+        $extraHeaders[] = "X-Title: Pezeex";
+    } elseif ($aiProvider === 'mistral') {
+        $endpoint = "https://api.mistral.ai/v1/chat/completions";
+        $candidateModels = ["mistral-small-latest", "open-mistral-nemo"];
+    }
+
+    if (!empty($customBaseUrl)) {
+        $endpoint = rtrim($customBaseUrl, '/');
+        if (strpos($endpoint, '/chat/completions') === false) {
+            $endpoint .= '/chat/completions';
+        }
+    }
+    if (!empty($customModel)) {
+        $candidateModels = [$customModel];
+    }
+
+    foreach ($candidateModels as $model) {
+        $payload = [
+            'model' => $model,
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $prompt
+                ]
+            ],
+            'response_format' => ['type' => 'json_object']
+        ];
+
+        $headers = array_merge([
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ], $extraHeaders);
+
+        list($httpCode, $result, $curlError) = safeHttpPost($endpoint, $headers, json_encode($payload));
+
+        if ($httpCode === 200 && !empty($result)) {
+            $apiDecoded = json_decode($result, true);
+            if (!empty($apiDecoded['choices'][0]['message']['content'])) {
+                $responseJson = $apiDecoded['choices'][0]['message']['content'];
+                break;
+            }
+        } else {
+            $lastError = "AI Provider ($aiProvider / $model) error [HTTP $httpCode]: " . substr($result, 0, 300) . " $curlError";
+        }
     }
 }
 
 if (empty($responseJson)) {
     http_response_code(502);
     echo json_encode([
-        'error' => 'Failed to generate alternatives from Gemini.',
+        'error' => 'Failed to generate alternatives from AI provider (' . htmlspecialchars($aiProvider) . ').',
         'details' => $lastError
     ], JSON_UNESCAPED_UNICODE);
     exit;

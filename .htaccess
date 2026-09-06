@@ -1,0 +1,29 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 1. Route API requests directly to PHP scripts
+  RewriteRule ^api/search/?$ api/search.php [L,QSA]
+  RewriteRule ^api/health/?$ api/health.php [L,QSA]
+
+  # 2. Prevent direct access to sensitive files
+  RewriteRule ^api/config\.php$ - [F,L]
+  RewriteRule ^\.env$ - [F,L]
+
+  # 3. Standard Vite React Single Page Application (SPA) routing
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# MIME types
+<IfModule mod_mime.c>
+  AddType application/javascript .js
+  AddType text/css .css
+  AddType application/json .json
+  AddType image/svg+xml .svg
+  AddType application/manifest+json .webmanifest
+</IfModule>
+
+# Security: Disable directory listing
+Options -Indexes
