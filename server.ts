@@ -91,7 +91,7 @@ function getAIConfig(): AIConfig {
     for (const [k, v] of Object.entries(env)) {
       if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
       const val = v.trim();
-      if (val.startsWith("AIzaSy")) {
+      if (val.startsWith("AIzaSy") || val.startsWith("AQ.")) {
         apiKey = val; provider = "gemini"; break;
       } else if (val.startsWith("gsk_")) {
         apiKey = val; provider = "groq"; break;
@@ -167,9 +167,10 @@ app.get("/api/health", (req, res) => {
 
 // Candidate models in preference order (reliable and active)
 const CANDIDATE_MODELS = [
+  "gemini-3.6-flash",
   "gemini-3.1-flash-lite",
   "gemini-flash-latest",
-  "gemini-3.8-flash",
+  "gemini-2.5-flash",
 ];
 
 function resolveStoreDomain(store: string, aiDomain?: string): string {

@@ -24,6 +24,17 @@ if (function_exists('getenv')) {
 // Method B: apache_getenv()
 if (function_exists('apache_getenv')) {
     $sources['apache_getenv'] = 'available';
+    $checkList = [
+        'GEMINI_API_KEY', 'AI_API_KEY', 'API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
+        'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_GEMINI_API_KEY', 'VITE_AI_API_KEY',
+        'GOOGLE_API_KEY', 'AI_KEY', 'CLAUDE_API_KEY', 'OPENROUTER_API_KEY'
+    ];
+    foreach ($checkList as $cKey) {
+        $v = apache_getenv($cKey);
+        if (!empty($v)) $env[$cKey] = trim($v);
+        $vRedir = apache_getenv('REDIRECT_' . $cKey);
+        if (!empty($vRedir)) $env[$cKey] = trim($vRedir);
+    }
 }
 
 // Method C: $_SERVER and $_ENV
@@ -31,14 +42,49 @@ $env = array_merge($env, $_SERVER ?? [], $_ENV ?? []);
 $sources['$_SERVER'] = isset($_SERVER) ? count($_SERVER) . ' variables' : 'empty';
 $sources['$_ENV'] = isset($_ENV) ? count($_ENV) . ' variables' : 'empty';
 
-// Method D: .env files in multiple potential paths
+// Normalize any REDIRECT_ prefixes from mod_rewrite
+foreach ($env as $k => $v) {
+    if (is_string($v) && strpos($k, 'REDIRECT_') === 0) {
+        $unprefixed = preg_replace('/^(REDIRECT_)+/', '', $k);
+        if (!empty($unprefixed) && !isset($env[$unprefixed])) {
+            $env[$unprefixed] = $v;
+        }
+    }
+}
+
+// Method D: Read .htaccess for SetEnv directives
+$docRoot = $_SERVER['DOCUMENT_ROOT'] ?? '';
+$htaccessPaths = [
+    $docRoot . '/.htaccess',
+    dirname(__DIR__) . '/.htaccess',
+    __DIR__ . '/.htaccess',
+    dirname($docRoot) . '/.htaccess'
+];
+$loadedHtaccess = [];
+foreach ($htaccessPaths as $ht) {
+    if (!empty($ht) && file_exists($ht) && is_readable($ht)) {
+        $loadedHtaccess[] = $ht;
+        $lines = file($ht, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (preg_match('/^SetEnv\s+([A-Za-z0-9_]+)\s+["\']?([^"\']+)["\']?/i', $line, $m)) {
+                $env[$m[1]] = trim($m[2]);
+            }
+        }
+    }
+}
+$sources['.htaccess_found'] = $loadedHtaccess;
+
+// Method E: .env files in multiple potential paths
 $checkedEnvPaths = [
     __DIR__ . '/.env',
     dirname(__DIR__) . '/.env',
     dirname(dirname(__DIR__)) . '/.env',
-    ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env',
-    ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/public_html/.env',
-    dirname($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env'
+    $docRoot . '/.env',
+    $docRoot . '/public_html/.env',
+    dirname($docRoot) . '/.env',
+    dirname($docRoot) . '/public_html/.env',
+    dirname(dirname($docRoot)) . '/.env'
 ];
 
 $loadedEnvFiles = [];
@@ -115,6 +161,8 @@ foreach ($env as $k => $v) {
         $apiKey = $val; $provider = 'mistral'; $detectedKeyName = $k; break;
     } elseif (strpos($kUpper, 'GEMINI') !== false || strpos($kUpper, 'GOOGLE') !== false) {
         $apiKey = $val; $provider = 'gemini'; $detectedKeyName = $k; break;
+    } elseif (strpos($kUpper, 'AI_API_KEY') !== false || strpos($kUpper, 'API_KEY') !== false || strpos($kUpper, 'AI_KEY') !== false) {
+        $apiKey = $val; $detectedKeyName = $k; break;
     }
 }
 
@@ -123,7 +171,7 @@ if (empty($apiKey)) {
     foreach ($env as $k => $v) {
         if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
         $val = trim($v);
-        if (strpos($val, 'AIzaSy') === 0) {
+        if (strpos($val, 'AIzaSy') === 0 || strpos($val, 'AQ.') === 0) {
             $apiKey = $val; $provider = 'gemini'; $detectedKeyName = $k; break;
         } elseif (strpos($val, 'gsk_') === 0) {
             $apiKey = $val; $provider = 'groq'; $detectedKeyName = $k; break;

@@ -1,3 +1,8 @@
+# =============================================================
+# If setting Environment Variable via .htaccess on your host:
+# SetEnv GEMINI_API_KEY your_api_key_here
+# =============================================================
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /

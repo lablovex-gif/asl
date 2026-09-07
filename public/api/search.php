@@ -30,17 +30,64 @@ function detectAIConfig() {
         if (is_array($g)) $env = array_merge($env, $g);
     }
 
-    // Method B: $_SERVER and $_ENV
+    // Method B: apache_getenv()
+    if (function_exists('apache_getenv')) {
+        $checkList = [
+            'GEMINI_API_KEY', 'AI_API_KEY', 'API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
+            'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_GEMINI_API_KEY', 'VITE_AI_API_KEY',
+            'GOOGLE_API_KEY', 'AI_KEY', 'CLAUDE_API_KEY', 'OPENROUTER_API_KEY'
+        ];
+        foreach ($checkList as $cKey) {
+            $v = apache_getenv($cKey);
+            if (!empty($v)) $env[$cKey] = trim($v);
+            $vRedir = apache_getenv('REDIRECT_' . $cKey);
+            if (!empty($vRedir)) $env[$cKey] = trim($vRedir);
+        }
+    }
+
+    // Method C: $_SERVER and $_ENV
     $env = array_merge($env, $_SERVER ?? [], $_ENV ?? []);
 
-    // Also read .env if available
+    // Normalize any REDIRECT_ prefixes from mod_rewrite
+    foreach ($env as $k => $v) {
+        if (is_string($v) && strpos($k, 'REDIRECT_') === 0) {
+            $unprefixed = preg_replace('/^(REDIRECT_)+/', '', $k);
+            if (!empty($unprefixed) && !isset($env[$unprefixed])) {
+                $env[$unprefixed] = $v;
+            }
+        }
+    }
+
+    // Method D: Read .htaccess for SetEnv directives
+    $htaccessPaths = [
+        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.htaccess',
+        dirname(__DIR__) . '/.htaccess',
+        __DIR__ . '/.htaccess',
+        dirname($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.htaccess'
+    ];
+    foreach ($htaccessPaths as $ht) {
+        if (!empty($ht) && file_exists($ht) && is_readable($ht)) {
+            $lines = file($ht, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (preg_match('/^SetEnv\s+([A-Za-z0-9_]+)\s+["\']?([^"\']+)["\']?/i', $line, $m)) {
+                    $env[$m[1]] = trim($m[2]);
+                }
+            }
+        }
+    }
+
+    // Method E: Read .env from all common host paths
+    $docRoot = $_SERVER['DOCUMENT_ROOT'] ?? '';
     $envPaths = [
         __DIR__ . '/.env',
         dirname(__DIR__) . '/.env',
         dirname(dirname(__DIR__)) . '/.env',
-        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env',
-        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/public_html/.env',
-        dirname($_SERVER['DOCUMENT_ROOT'] ?? '') . '/.env'
+        $docRoot . '/.env',
+        $docRoot . '/public_html/.env',
+        dirname($docRoot) . '/.env',
+        dirname($docRoot) . '/public_html/.env',
+        dirname(dirname($docRoot)) . '/.env'
     ];
     foreach ($envPaths as $p) {
         if (!empty($p) && file_exists($p) && is_readable($p)) {
@@ -55,12 +102,13 @@ function detectAIConfig() {
         }
     }
 
-    // Also check config.php
+    // Method F: Check config.php
     $configFiles = [
         __DIR__ . '/config.php',
         dirname(__DIR__) . '/config.php',
-        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/api/config.php',
-        ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/config.php'
+        $docRoot . '/api/config.php',
+        $docRoot . '/config.php',
+        dirname($docRoot) . '/config.php'
     ];
     foreach ($configFiles as $configFile) {
         if (!empty($configFile) && file_exists($configFile)) {
@@ -87,12 +135,11 @@ function detectAIConfig() {
         'APP_URL', 'K_SERVICE', 'K_REVISION', 'K_CONFIGURATION', 'LS_COLORS', 'COLORTERM'
     ];
 
-    // Priority 1: Check known names or any variable with key/token/secret
+    // Priority 1: Check variables by name (GEMINI, OPENAI, GROQ, DEEPSEEK, ANTHROPIC, AI_API_KEY, etc.)
     foreach ($env as $k => $v) {
         if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
         $val = trim($v);
         if (strlen($val) < 18 || strlen($val) > 400) continue;
-        // Ignore file paths, URLs, JSON objects
         if ($val[0] === '/' || strpos($val, 'http://') === 0 || strpos($val, 'https://') === 0 || $val[0] === '{') continue;
 
         $kUpper = strtoupper($k);
@@ -110,6 +157,9 @@ function detectAIConfig() {
             $apiKey = $val; $provider = 'mistral'; break;
         } elseif (strpos($kUpper, 'GEMINI') !== false || strpos($kUpper, 'GOOGLE') !== false) {
             $apiKey = $val; $provider = 'gemini'; break;
+        } elseif (strpos($kUpper, 'AI_API_KEY') !== false || strpos($kUpper, 'API_KEY') !== false || strpos($kUpper, 'AI_KEY') !== false) {
+            $apiKey = $val;
+            break;
         }
     }
 
@@ -118,7 +168,7 @@ function detectAIConfig() {
         foreach ($env as $k => $v) {
             if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
             $val = trim($v);
-            if (strpos($val, 'AIzaSy') === 0) {
+            if (strpos($val, 'AIzaSy') === 0 || strpos($val, 'AQ.') === 0) {
                 $apiKey = $val; $provider = 'gemini'; break;
             } elseif (strpos($val, 'gsk_') === 0) {
                 $apiKey = $val; $provider = 'groq'; break;
@@ -132,12 +182,11 @@ function detectAIConfig() {
         }
     }
 
-    // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token (regardless of name!)
+    // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token
     if (empty($apiKey)) {
         foreach ($env as $k => $v) {
             if (!is_string($v) || in_array(strtoupper($k), $systemVars)) continue;
             $val = trim($v);
-            // Must be between 20 and 300 characters, no spaces, not a URL, not a file path
             if (strlen($val) >= 20 && strlen($val) <= 300 && strpos($val, ' ') === false && $val[0] !== '/' && strpos($val, '://') === false) {
                 $apiKey = $val;
                 break;
@@ -145,9 +194,9 @@ function detectAIConfig() {
         }
     }
 
-    // Auto-detect provider based on key format or base URL if not already determined
+    // Auto-detect provider based on key format
     if (!empty($apiKey) && empty($provider)) {
-        if (strpos($apiKey, 'AIzaSy') === 0) {
+        if (strpos($apiKey, 'AIzaSy') === 0 || strpos($apiKey, 'AQ.') === 0) {
             $provider = 'gemini';
         } elseif (strpos($apiKey, 'gsk_') === 0) {
             $provider = 'groq';
@@ -366,15 +415,18 @@ if ($aiProvider === 'gemini') {
     ];
 
     $candidateModels = !empty($customModel) ? [$customModel] : [
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-3.8-flash'
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
+        'gemini-2.5-flash'
     ];
 
     foreach ($candidateModels as $model) {
         $apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
-        list($httpCode, $result, $curlError) = safeHttpPost($apiUrl, ['Content-Type: application/json'], json_encode($payload));
+        list($httpCode, $result, $curlError) = safeHttpPost($apiUrl, [
+            'Content-Type: application/json',
+            'x-goog-api-key: ' . $apiKey
+        ], json_encode($payload));
 
         if ($httpCode === 200 && !empty($result)) {
             $apiDecoded = json_decode($result, true);
