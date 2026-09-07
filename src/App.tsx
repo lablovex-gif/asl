@@ -2010,6 +2010,80 @@ const StoreLogo = memo(({
   );
 });
 
+const BROWSER_LANG_MAP: Record<string, string> = {
+  ar: "العربية",
+  en: "English",
+  hi: "हिन्दी",
+  zh: "中文 (普通话)",
+  es: "Español",
+  fr: "Français",
+  pt: "Português",
+  de: "Deutsch",
+  nl: "Nederlands",
+  pl: "Polski",
+  sr: "Srpski",
+  sv: "Svenska",
+  cs: "Čeština",
+  da: "Dansk",
+  no: "Norsk",
+  nb: "Norsk",
+  nn: "Norsk",
+  fi: "Suomi",
+  el: "Ελληνικά",
+  hu: "Magyar",
+  ro: "Română",
+  uk: "Українська",
+  bg: "Български",
+  hr: "Hrvatski",
+  sk: "Slovenčina",
+  lt: "Lietuvių",
+  sl: "Slovenščina",
+  lv: "Latviešu",
+  et: "Eesti",
+  sq: "Shqip",
+  bs: "Bosanski",
+  is: "Íslenska",
+  ja: "日本語",
+  ru: "Русский",
+  ur: "اردو",
+  tr: "Türkçe",
+  it: "Italiano",
+  ko: "한국어",
+  fa: "فارسی",
+};
+
+function getInitialLanguage(): string {
+  if (typeof window === "undefined") return "English";
+  try {
+    const saved = localStorage.getItem("pezeex_language");
+    if (saved && translations[saved]) return saved;
+  } catch (e) {
+    // Ignore error
+  }
+
+  try {
+    const navLangs = navigator.languages && navigator.languages.length > 0 
+      ? navigator.languages 
+      : [navigator.language];
+
+    for (const rawLang of navLangs) {
+      if (!rawLang) continue;
+      const code = rawLang.toLowerCase().split("-")[0].trim();
+      if (BROWSER_LANG_MAP[code] && translations[BROWSER_LANG_MAP[code]]) {
+        return BROWSER_LANG_MAP[code];
+      }
+    }
+  } catch (e) {
+    // Ignore error
+  }
+
+  const primaryLang = (navigator.language || "").toLowerCase();
+  if (primaryLang.startsWith("ar")) {
+    return "العربية";
+  }
+  return "English";
+}
+
 export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2022,7 +2096,7 @@ export default function App() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [dashboardStats, setDashboardStats] = useState({ visitors: 1, searches: 0, clicks: 0, activeUsers: 1 });
-  const [currentLang, setCurrentLang] = useState("العربية");
+  const [currentLang, setCurrentLang] = useState<string>(() => getInitialLanguage());
   const [userCountry, setUserCountry] = useState<string>('us');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [showIntroDialog, setShowIntroDialog] = useState(() => {
@@ -2186,6 +2260,16 @@ export default function App() {
   const t = { ...translations[currentLang], ...(installTranslations[currentLang] || {}) };
   const activeMessages = loadingMessages[currentLang] || loadingMessages["English"];
   const displayMessage = activeMessages[messageIndex % activeMessages.length];
+
+  // Sync document language and text direction attributes
+  useEffect(() => {
+    try {
+      document.documentElement.lang = currentLang === "العربية" ? "ar" : (currentLang === "English" ? "en" : "auto");
+      if (t?.dir) {
+        document.documentElement.dir = t.dir;
+      }
+    } catch (e) {}
+  }, [currentLang, t?.dir]);
 
   const handleShareWebsite = async () => {
     const url = window.location.href;
@@ -2547,6 +2631,9 @@ export default function App() {
                               key={lang.name}
                               onClick={() => {
                                 setCurrentLang(lang.native);
+                                try {
+                                  localStorage.setItem("pezeex_language", lang.native);
+                                } catch (e) {}
                                 setShowLanguages(false);
                               }}
                               className={`flex items-center justify-between p-4 rounded-xl transition-all ${
