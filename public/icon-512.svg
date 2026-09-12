@@ -14,7 +14,7 @@
     </mask>
   </defs>
 
-  <rect width="512" height="512" rx="115" fill="#09090b" />
+  <rect width="512" height="512" fill="#09090b" />
 
   <g transform="translate(84.9, 79) scale(1.18)">
     <g mask="url(#tag-cut-icon)">

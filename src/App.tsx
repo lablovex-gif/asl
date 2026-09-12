@@ -2830,8 +2830,8 @@ export default function App() {
                   </g>
                 </svg>
               </motion.div>
-              <h2 className="text-3xl font-bold mb-4">{t.welcome}</h2>
-              <p className="text-muted-foreground text-lg max-w-md">
+              <h2 className="text-3xl sm:text-4xl font-extrabold mb-3 sm:mb-4 tracking-tight text-foreground">{t.welcome}</h2>
+              <p className="text-muted-foreground text-lg sm:text-xl max-w-lg leading-relaxed">
                 {t.description}
               </p>
             </div>
