@@ -51,36 +51,11 @@ async function fetchAlternativesDirectFromClient(productName: string, language: 
 أجب بصيغة JSON حصراً مطابقة تماماً للشكل التالي:
 {"message": "نص الترحيب", "alternatives": [{"store": "أمازون", "storeDomain": "amazon.sa", "name": "اسم المنتج", "searchKey": "اسم المنتج للبحث", "price": "150 SAR", "description": "السبب والوصف", "similarity": "85%", "exactUrl": "https://www.amazon.sa/s?k=...", "imageUrl": "", "logoUrl": ""}]}`;
 
-  const isBytez = /^[a-f0-9]{32}$/i.test(clientKey.trim());
-  const isGemini = clientKey.startsWith("AIzaSy") || clientKey.startsWith("AQ.");
+  const isGemini = clientKey.startsWith("AIzaSy") || !clientKey.startsWith("sk-");
   let rawJsonText = "";
 
-  if (isBytez) {
-    const candidateModels = ["Qwen/Qwen3-4B", "meta-llama/Llama-3-70b", "google/gemma-2-2b-it"];
-    for (const model of candidateModels) {
-      try {
-        const res = await fetch("https://api.bytez.com/models/v2/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Key ${clientKey.trim()}`
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: prompt }]
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          rawJsonText = data?.choices?.[0]?.message?.content || "";
-          if (rawJsonText) break;
-        }
-      } catch {
-        // Continue to fallback
-      }
-    }
-  } else if (isGemini) {
-    const models = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  if (isGemini) {
+    const models = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
     let lastErr: any = null;
     for (const model of models) {
       try {
@@ -156,41 +131,17 @@ async function fetchAlternativesDirectFromClient(productName: string, language: 
   return parsed;
 }
 
-export async function testApiKey(apiKey: string): Promise<{ valid: boolean; message: string; provider?: string }> {
-  try {
-    const res = await fetch("/api/test-key", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey }),
-    });
-    if (res.ok) {
-      return await res.json();
-    }
-    return { valid: false, message: `تعذر الاتصال بخادم الفحص (${res.status})` };
-  } catch (e: any) {
-    return { valid: false, message: `تعذر التحقق: ${e?.message || e}` };
-  }
-}
-
 export async function getProductAlternatives(productName: string, language: string = "العربية"): Promise<ProductsResponse | null> {
-  const storedKeys = typeof window !== "undefined" ? localStorage.getItem("pezeex_api_keys") || "" : "";
-  
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (storedKeys.trim()) {
-    headers["x-api-key"] = storedKeys.trim();
-  }
-
   const requestBody = JSON.stringify({
     productName,
     language,
-    clientApiKey: storedKeys.trim() || undefined,
   });
 
   const requestOptions = {
     method: "POST",
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+    },
     body: requestBody,
   };
 
@@ -224,9 +175,9 @@ export async function getProductAlternatives(productName: string, language: stri
     return data;
   }
 
-  // 3. Fallback: If server is 404 / unavailable / static hosting, check if AI key is injected in environment variables or localStorage
+  // 3. Fallback: If server is 404 / unavailable / static hosting, check if AI key is injected in environment variables
   const metaEnv = (import.meta as any).env || {};
-  const clientKey = storedKeys.trim() || ((metaEnv.VITE_AI_API_KEY || metaEnv.VITE_GEMINI_API_KEY || "") as string);
+  const clientKey = (metaEnv.VITE_AI_API_KEY || metaEnv.VITE_GEMINI_API_KEY || "") as string;
   if (clientKey && clientKey.trim().length > 10) {
     try {
       return await fetchAlternativesDirectFromClient(productName, language, clientKey.trim());
