@@ -95,7 +95,22 @@ function getAllAIConfigs(): AIConfigItem[] {
     });
   };
 
-  // 1. Look for explicit comma/newline-separated lists (e.g. GEMINI_API_KEYS or API_KEYS)
+  // 1. Look for numbered variables FIRST in exact natural numeric order (API_KEY_1, API_KEY_2, API_KEY_3, etc.)
+  const numberedKeys = Object.keys(env)
+    .filter(k => /^(GEMINI_API_KEY|API_KEY|OPENAI_API_KEY|GROQ_API_KEY|DEEPSEEK_API_KEY|CLAUDE_API_KEY)[_-]?\d+$/i.test(k))
+    .sort((a, b) => {
+      const numA = parseInt(a.match(/\d+$/)?.[0] || "0", 10);
+      const numB = parseInt(b.match(/\d+$/)?.[0] || "0", 10);
+      return numA - numB;
+    });
+  for (const k of numberedKeys) {
+    const val = env[k];
+    if (typeof val === "string") {
+      addKey(val, k);
+    }
+  }
+
+  // 2. Look for explicit comma/newline-separated lists (e.g. GEMINI_API_KEYS or API_KEYS)
   const listVars = ["API_KEYS", "GEMINI_API_KEYS", "OPENAI_API_KEYS", "AI_KEYS"];
   for (const varName of listVars) {
     const val = env[varName];
@@ -104,17 +119,6 @@ function getAllAIConfigs(): AIConfigItem[] {
       for (const part of parts) {
         addKey(part, varName);
       }
-    }
-  }
-
-  // 2. Look for numbered variables (e.g. GEMINI_API_KEY_1, GEMINI_API_KEY_2, API_KEY_1, API_KEY_2, API_KEY_3, etc.)
-  const numberedKeys = Object.keys(env)
-    .filter(k => /^(GEMINI_API_KEY|API_KEY|OPENAI_API_KEY|GROQ_API_KEY|DEEPSEEK_API_KEY|CLAUDE_API_KEY)[_-]?\d+$/i.test(k))
-    .sort();
-  for (const k of numberedKeys) {
-    const val = env[k];
-    if (typeof val === "string") {
-      addKey(val, k);
     }
   }
 
@@ -161,9 +165,6 @@ function getAIClient(apiKey: string): GoogleGenAI {
   }
   return client;
 }
-
-// Global round-robin pointer for multi-key rotation
-let currentKeyIndex = 0;
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
@@ -382,37 +383,50 @@ async function executeSingleAIConfig(aiConfig: AIConfigItem, prompt: string): Pr
   return generatedText;
 }
 
-// Executes search with key rotation and automatic failover
-async function executeAISearchWithRotation(prompt: string): Promise<{ text: string; keyId: string; totalKeys: number }> {
+// Global counter for search operations to ensure round-robin rotation:
+// Person 1 (Search 1) -> Key 1
+// Person 2 (Search 2) -> Key 2
+// Person 3 (Search 3) -> Key 3
+// Person 4 (Search 4) -> Key 1
+let globalSearchOperationCount = 0;
+
+// Executes search with strict per-operation round-robin key rotation and automatic failover
+async function executeAISearchWithRotation(prompt: string): Promise<{ text: string; keyId: string; totalKeys: number; operationIndex: number }> {
   // Reload dotenv in case user edited .env file without restarting server
   dotenv.config();
   const configs = getAllAIConfigs();
 
   if (configs.length === 0) {
-    throw new Error("لم يتم تكوين أي مفتاح API. يرجى إضافة GEMINI_API_KEY_1 و GEMINI_API_KEY_2 و GEMINI_API_KEY_3 في ملف .env");
+    throw new Error("لم يتم تكوين أي مفتاح API. يرجى إضافة API_KEY_1 و API_KEY_2 و API_KEY_3 في ملف .env");
   }
 
   const numKeys = configs.length;
-  let lastError: any = null;
-  const startIdx = currentKeyIndex % numKeys;
+  // Atomically increment operation count for this new incoming search
+  const currentOp = ++globalSearchOperationCount;
+  // Exact assigned primary key index for this search:
+  // Op 1 -> index 0 (Key 1)
+  // Op 2 -> index 1 (Key 2)
+  // Op 3 -> index 2 (Key 3)
+  // Op 4 -> index 0 (Key 1) ...
+  const primaryIdx = (currentOp - 1) % numKeys;
 
-  // Loop through available keys starting from currentKeyIndex
+  let lastError: any = null;
+
+  // Try the assigned primary key first, then fall back to remaining keys in order if needed
   for (let attempt = 0; attempt < numKeys; attempt++) {
-    const keyIdx = (startIdx + attempt) % numKeys;
+    const keyIdx = (primaryIdx + attempt) % numKeys;
     const currentConfig = configs[keyIdx];
 
     try {
-      console.log(`[Key Pool] Attempting search with key #${keyIdx + 1}/${numKeys} (${currentConfig.id}, provider: ${currentConfig.provider})`);
+      console.log(`[Round-Robin Search #${currentOp}] Person/Operation #${currentOp} assigned Key #${keyIdx + 1}/${numKeys} (${currentConfig.id}, provider: ${currentConfig.provider}) [attempt ${attempt + 1}]`);
       const text = await executeSingleAIConfig(currentConfig, prompt);
       if (text) {
-        // Rotate pointer for next incoming request
-        currentKeyIndex = (keyIdx + 1) % numKeys;
-        console.log(`[Key Pool] Key #${keyIdx + 1} succeeded. Next request will start with key #${(currentKeyIndex % numKeys) + 1}`);
-        return { text, keyId: currentConfig.id, totalKeys: numKeys };
+        console.log(`[Round-Robin Search #${currentOp}] Key #${keyIdx + 1} succeeded. Next search (Operation #${currentOp + 1}) will automatically use Key #${(currentOp % numKeys) + 1}.`);
+        return { text, keyId: currentConfig.id, totalKeys: numKeys, operationIndex: currentOp };
       }
     } catch (err: any) {
       lastError = err;
-      console.warn(`[Key Pool] Key #${keyIdx + 1} (${currentConfig.id}) encountered error: ${err?.message || err}. Auto-switching to next key...`);
+      console.warn(`[Round-Robin Search #${currentOp}] Key #${keyIdx + 1} (${currentConfig.id}) encountered error: ${err?.message || err}. Falling over to next key...`);
     }
   }
 
