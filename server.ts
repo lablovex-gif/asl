@@ -46,122 +46,124 @@ function sanitizeUrl(rawUrl: string, fallbackQuery?: string): string {
   return "";
 }
 
-interface AIConfig {
+interface AIConfigItem {
+  id: string;
   provider: "gemini" | "openai" | "groq" | "deepseek" | "openrouter" | "anthropic" | "mistral" | "openai-compatible";
   apiKey: string;
   customBaseUrl?: string;
   customModel?: string;
 }
 
-function getAIConfig(): AIConfig {
+function detectProvider(apiKey: string, varName: string = ""): "gemini" | "openai" | "groq" | "deepseek" | "openrouter" | "anthropic" | "mistral" | "openai-compatible" {
+  const kUpper = varName.toUpperCase();
+  if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) return "openai";
+  if (kUpper.includes("GROQ")) return "groq";
+  if (kUpper.includes("DEEPSEEK")) return "deepseek";
+  if (kUpper.includes("OPENROUTER")) return "openrouter";
+  if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) return "anthropic";
+  if (kUpper.includes("MISTRAL")) return "mistral";
+  if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) return "gemini";
+
+  const val = apiKey.trim();
+  if (val.startsWith("AIzaSy") || val.startsWith("AQ.")) return "gemini";
+  if (val.startsWith("gsk_")) return "groq";
+  if (val.startsWith("sk-or-")) return "openrouter";
+  if (val.startsWith("sk-ant-")) return "anthropic";
+  if (val.startsWith("sk-proj-") || val.startsWith("sk-")) return "openai";
+  return "gemini";
+}
+
+function getAllAIConfigs(): AIConfigItem[] {
   const env = process.env;
-  let apiKey = "";
-  let provider = "";
   const customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
   const customModel = env.AI_MODEL || env.OPENAI_MODEL || env.GEMINI_MODEL;
+  const configs: AIConfigItem[] = [];
+  const seenKeys = new Set<string>();
 
+  const addKey = (rawKey: string, varName: string = "") => {
+    const key = rawKey.trim();
+    if (!key || seenKeys.has(key)) return;
+    if (key.length < 15 || key.startsWith("/") || key.startsWith("http://") || key.startsWith("https://") || key.startsWith("{")) return;
+    seenKeys.add(key);
+    const provider = detectProvider(key, varName);
+    configs.push({
+      id: `${varName || "key"}_${configs.length + 1}`,
+      apiKey: key,
+      provider: customBaseUrl ? "openai-compatible" : provider,
+      customBaseUrl,
+      customModel,
+    });
+  };
+
+  // 1. Look for explicit comma/newline-separated lists (e.g. GEMINI_API_KEYS or API_KEYS)
+  const listVars = ["API_KEYS", "GEMINI_API_KEYS", "OPENAI_API_KEYS", "AI_KEYS"];
+  for (const varName of listVars) {
+    const val = env[varName];
+    if (typeof val === "string" && val.trim()) {
+      const parts = val.split(/[\n,;]+/).map(p => p.trim()).filter(Boolean);
+      for (const part of parts) {
+        addKey(part, varName);
+      }
+    }
+  }
+
+  // 2. Look for numbered variables (e.g. GEMINI_API_KEY_1, GEMINI_API_KEY_2, API_KEY_1, API_KEY_2, API_KEY_3, etc.)
+  const numberedKeys = Object.keys(env)
+    .filter(k => /^(GEMINI_API_KEY|API_KEY|OPENAI_API_KEY|GROQ_API_KEY|DEEPSEEK_API_KEY|CLAUDE_API_KEY)[_-]?\d+$/i.test(k))
+    .sort();
+  for (const k of numberedKeys) {
+    const val = env[k];
+    if (typeof val === "string") {
+      addKey(val, k);
+    }
+  }
+
+  // 3. Look for standard single keys (GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, etc.)
+  const standardVars = ["GEMINI_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "API_KEY"];
+  for (const varName of standardVars) {
+    const val = env[varName];
+    if (typeof val === "string") {
+      addKey(val, varName);
+    }
+  }
+
+  // 4. Fallback search across any remaining env vars that resemble API tokens
   const systemVars = new Set([
     "PATH", "PWD", "HOME", "SHELL", "USER", "HOSTNAME", "PORT", "NODE_ENV", "TERM", "SHLVL", "_", "LANG",
     "DISABLE_HMR", "APP_URL", "K_SERVICE", "K_REVISION", "K_CONFIGURATION", "LS_COLORS", "COLORTERM"
   ]);
-
-  // Priority 1: Check provider-suggestive names
   for (const [k, v] of Object.entries(env)) {
-    if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
+    if (typeof v !== "string" || systemVars.has(k.toUpperCase()) || seenKeys.has(v.trim())) continue;
     const val = v.trim();
-    if (val.length < 18 || val.length > 400 || val.startsWith("/") || val.startsWith("http://") || val.startsWith("https://") || val.startsWith("{")) continue;
-
-    const kUpper = k.toUpperCase();
-    if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) {
-      apiKey = val; provider = "openai"; break;
-    } else if (kUpper.includes("GROQ")) {
-      apiKey = val; provider = "groq"; break;
-    } else if (kUpper.includes("DEEPSEEK")) {
-      apiKey = val; provider = "deepseek"; break;
-    } else if (kUpper.includes("OPENROUTER")) {
-      apiKey = val; provider = "openrouter"; break;
-    } else if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) {
-      apiKey = val; provider = "anthropic"; break;
-    } else if (kUpper.includes("MISTRAL")) {
-      apiKey = val; provider = "mistral"; break;
-    } else if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) {
-      apiKey = val; provider = "gemini"; break;
+    if ((val.startsWith("AIzaSy") || val.startsWith("gsk_") || val.startsWith("sk-")) && val.length >= 20) {
+      addKey(val, k);
     }
   }
 
-  // Priority 2: Check ANY variable value for known key signatures
-  if (!apiKey) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-      const val = v.trim();
-      if (val.startsWith("AIzaSy") || val.startsWith("AQ.")) {
-        apiKey = val; provider = "gemini"; break;
-      } else if (val.startsWith("gsk_")) {
-        apiKey = val; provider = "groq"; break;
-      } else if (val.startsWith("sk-or-")) {
-        apiKey = val; provider = "openrouter"; break;
-      } else if (val.startsWith("sk-ant-")) {
-        apiKey = val; provider = "anthropic"; break;
-      } else if (val.startsWith("sk-proj-") || val.startsWith("sk-")) {
-        apiKey = val; provider = "openai"; break;
-      }
-    }
-  }
-
-  // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token (name doesn't matter!)
-  if (!apiKey) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-      const val = v.trim();
-      if (val.length >= 20 && val.length <= 300 && !val.includes(" ") && !val.startsWith("/") && !val.includes("://")) {
-        apiKey = val;
-        break;
-      }
-    }
-  }
-
-  apiKey = (apiKey || "").trim();
-
-  if (apiKey && !provider) {
-    if (apiKey.startsWith("AIzaSy")) {
-      provider = "gemini";
-    } else if (apiKey.startsWith("gsk_")) {
-      provider = "groq";
-    } else if (apiKey.startsWith("sk-or-")) {
-      provider = "openrouter";
-    } else if (apiKey.startsWith("sk-ant-")) {
-      provider = "anthropic";
-    } else if (customBaseUrl) {
-      provider = "openai-compatible";
-    } else if (apiKey.startsWith("sk-")) {
-      provider = "openai";
-    } else {
-      provider = "gemini";
-    }
-  }
-
-  return {
-    provider: (provider || "gemini") as any,
-    apiKey,
-    customBaseUrl,
-    customModel
-  };
+  return configs;
 }
 
-let aiClient: GoogleGenAI | null = null;
+// Map of cached GoogleGenAI instances per API key
+const aiClientsMap = new Map<string, GoogleGenAI>();
 function getAIClient(apiKey: string): GoogleGenAI {
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey: apiKey.trim(),
+  const cleanKey = apiKey.trim();
+  let client = aiClientsMap.get(cleanKey);
+  if (!client) {
+    client = new GoogleGenAI({
+      apiKey: cleanKey,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
         },
       },
     });
+    aiClientsMap.set(cleanKey, client);
   }
-  return aiClient;
+  return client;
 }
+
+// Global round-robin pointer for multi-key rotation
+let currentKeyIndex = 0;
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
@@ -216,7 +218,208 @@ function resolveStoreDomain(store: string, aiDomain?: string): string {
   return "";
 }
 
-// Secure search endpoint proxying Gemini API calls
+async function executeSingleAIConfig(aiConfig: AIConfigItem, prompt: string): Promise<string> {
+  let generatedText: string | null = null;
+  let lastError: any = null;
+
+  if (aiConfig.provider === "gemini") {
+    const ai = getAIClient(aiConfig.apiKey);
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        message: { type: Type.STRING },
+        alternatives: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              store: { type: Type.STRING },
+              storeDomain: { type: Type.STRING },
+              name: { type: Type.STRING },
+              searchKey: { type: Type.STRING },
+              price: { type: Type.STRING },
+              description: { type: Type.STRING },
+              similarity: { type: Type.STRING },
+              exactUrl: { type: Type.STRING },
+              imageUrl: { type: Type.STRING },
+              logoUrl: { type: Type.STRING }
+            },
+            required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
+          }
+        }
+      },
+      required: ["alternatives"]
+    };
+
+    const candidateModels = aiConfig.customModel ? [aiConfig.customModel] : CANDIDATE_MODELS;
+
+    for (const model of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema,
+          },
+        });
+        if (response.text) {
+          generatedText = response.text;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[AI Gemini] Model ${model} failed for key ${aiConfig.id}:`, err?.message || err);
+      }
+    }
+  } else if (aiConfig.provider === "anthropic") {
+    const model = aiConfig.customModel || "claude-3-5-haiku-20241022";
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": aiConfig.apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          system: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown blocks or any text before or after the JSON.",
+          messages: [{ role: "user", content: prompt }]
+        })
+      });
+
+      if (response.ok) {
+        const data: any = await response.json();
+        if (data?.content?.[0]?.text) {
+          generatedText = data.content[0].text;
+        }
+      } else {
+        const errBody = await response.text();
+        lastError = new Error(`Anthropic error [${response.status}]: ${errBody}`);
+      }
+    } catch (err: any) {
+      lastError = err;
+    }
+  } else {
+    // OpenAI and OpenAI-compatible (Groq, DeepSeek, OpenRouter, Mistral, Custom)
+    let endpoint = "https://api.openai.com/v1/chat/completions";
+    let candidateModels = ["gpt-4o-mini", "gpt-4o"];
+    const extraHeaders: Record<string, string> = {};
+
+    if (aiConfig.provider === "groq") {
+      endpoint = "https://api.groq.com/openai/v1/chat/completions";
+      candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+    } else if (aiConfig.provider === "deepseek") {
+      endpoint = "https://api.deepseek.com/chat/completions";
+      candidateModels = ["deepseek-chat"];
+    } else if (aiConfig.provider === "openrouter") {
+      endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      candidateModels = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"];
+      extraHeaders["HTTP-Referer"] = "https://pezeex.com";
+      extraHeaders["X-Title"] = "Pezeex";
+    } else if (aiConfig.provider === "mistral") {
+      endpoint = "https://api.mistral.ai/v1/chat/completions";
+      candidateModels = ["mistral-small-latest", "open-mistral-nemo"];
+    }
+
+    if (aiConfig.customBaseUrl) {
+      endpoint = aiConfig.customBaseUrl.replace(/\/+$/, "");
+      if (!endpoint.includes("/chat/completions")) {
+        endpoint += "/chat/completions";
+      }
+    }
+    if (aiConfig.customModel) {
+      candidateModels = [aiConfig.customModel];
+    }
+
+    for (const model of candidateModels) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${aiConfig.apiKey}`,
+            ...extraHeaders
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "system",
+                content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+              },
+              {
+                role: "user",
+                content: prompt
+              }
+            ],
+            response_format: { type: "json_object" }
+          })
+        });
+
+        if (response.ok) {
+          const data: any = await response.json();
+          if (data?.choices?.[0]?.message?.content) {
+            generatedText = data.choices[0].message.content;
+            break;
+          }
+        } else {
+          const errBody = await response.text();
+          lastError = new Error(`AI Provider [${response.status}]: ${errBody}`);
+        }
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+  }
+
+  if (!generatedText) {
+    throw lastError || new Error(`Key ${aiConfig.id} could not generate response.`);
+  }
+
+  return generatedText;
+}
+
+// Executes search with key rotation and automatic failover
+async function executeAISearchWithRotation(prompt: string): Promise<{ text: string; keyId: string; totalKeys: number }> {
+  // Reload dotenv in case user edited .env file without restarting server
+  dotenv.config();
+  const configs = getAllAIConfigs();
+
+  if (configs.length === 0) {
+    throw new Error("لم يتم تكوين أي مفتاح API. يرجى إضافة GEMINI_API_KEY_1 و GEMINI_API_KEY_2 و GEMINI_API_KEY_3 في ملف .env");
+  }
+
+  const numKeys = configs.length;
+  let lastError: any = null;
+  const startIdx = currentKeyIndex % numKeys;
+
+  // Loop through available keys starting from currentKeyIndex
+  for (let attempt = 0; attempt < numKeys; attempt++) {
+    const keyIdx = (startIdx + attempt) % numKeys;
+    const currentConfig = configs[keyIdx];
+
+    try {
+      console.log(`[Key Pool] Attempting search with key #${keyIdx + 1}/${numKeys} (${currentConfig.id}, provider: ${currentConfig.provider})`);
+      const text = await executeSingleAIConfig(currentConfig, prompt);
+      if (text) {
+        // Rotate pointer for next incoming request
+        currentKeyIndex = (keyIdx + 1) % numKeys;
+        console.log(`[Key Pool] Key #${keyIdx + 1} succeeded. Next request will start with key #${(currentKeyIndex % numKeys) + 1}`);
+        return { text, keyId: currentConfig.id, totalKeys: numKeys };
+      }
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[Key Pool] Key #${keyIdx + 1} (${currentConfig.id}) encountered error: ${err?.message || err}. Auto-switching to next key...`);
+    }
+  }
+
+  throw lastError || new Error("All configured API keys in the pool failed or reached their rate limits.");
+}
+
+// Secure search endpoint proxying AI API calls with automatic key switching
 app.post("/api/search", async (req, res) => {
   try {
     const { productName, language = "العربية" } = req.body || {};
@@ -227,14 +430,6 @@ app.post("/api/search", async (req, res) => {
 
     const cleanProductName = productName.trim().substring(0, 500);
     const cleanLanguage = typeof language === "string" ? language.trim().substring(0, 50) : "العربية";
-
-    const aiConfig = getAIConfig();
-    if (!aiConfig.apiKey) {
-      return res.status(500).json({
-        error: "AI API Key is not configured.",
-        details: "Please set an API key for Gemini, OpenAI, Groq, DeepSeek, OpenRouter, Anthropic, or any AI in your environment variables or Secrets panel."
-      });
-    }
 
     const prompt = `أنت مساعد ذكي متخصص في إيجاد بدائل حقيقية وممتازة وأرخص للمنتجات.
 
@@ -249,165 +444,7 @@ app.post("/api/search", async (req, res) => {
 
 اللغة المطلوبة للرد: ${cleanLanguage}.`;
 
-    let generatedText: string | null = null;
-    let lastError: any = null;
-
-    if (aiConfig.provider === "gemini") {
-      const ai = getAIClient(aiConfig.apiKey);
-      const responseSchema = {
-        type: Type.OBJECT,
-        properties: {
-          message: { type: Type.STRING },
-          alternatives: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                store: { type: Type.STRING },
-                storeDomain: { type: Type.STRING },
-                name: { type: Type.STRING },
-                searchKey: { type: Type.STRING },
-                price: { type: Type.STRING },
-                description: { type: Type.STRING },
-                similarity: { type: Type.STRING },
-                exactUrl: { type: Type.STRING },
-                imageUrl: { type: Type.STRING },
-                logoUrl: { type: Type.STRING }
-              },
-              required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
-            }
-          }
-        },
-        required: ["alternatives"]
-      };
-
-      const candidateModels = aiConfig.customModel ? [aiConfig.customModel] : CANDIDATE_MODELS;
-
-      for (const model of candidateModels) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema,
-            },
-          });
-          if (response.text) {
-            generatedText = response.text;
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
-          console.warn(`Model ${model} failed, trying next candidate...`, err?.message || err);
-        }
-      }
-    } else if (aiConfig.provider === "anthropic") {
-      const model = aiConfig.customModel || "claude-3-5-haiku-20241022";
-      try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": aiConfig.apiKey,
-            "anthropic-version": "2023-06-01"
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 4096,
-            system: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown blocks or any text before or after the JSON.",
-            messages: [{ role: "user", content: prompt }]
-          })
-        });
-
-        if (response.ok) {
-          const data: any = await response.json();
-          if (data?.content?.[0]?.text) {
-            generatedText = data.content[0].text;
-          }
-        } else {
-          const errBody = await response.text();
-          lastError = new Error(`Anthropic error [${response.status}]: ${errBody}`);
-        }
-      } catch (err: any) {
-        lastError = err;
-      }
-    } else {
-      // OpenAI and OpenAI-compatible (Groq, DeepSeek, OpenRouter, Mistral, Custom)
-      let endpoint = "https://api.openai.com/v1/chat/completions";
-      let candidateModels = ["gpt-4o-mini", "gpt-4o"];
-      const extraHeaders: Record<string, string> = {};
-
-      if (aiConfig.provider === "groq") {
-        endpoint = "https://api.groq.com/openai/v1/chat/completions";
-        candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-      } else if (aiConfig.provider === "deepseek") {
-        endpoint = "https://api.deepseek.com/chat/completions";
-        candidateModels = ["deepseek-chat"];
-      } else if (aiConfig.provider === "openrouter") {
-        endpoint = "https://openrouter.ai/api/v1/chat/completions";
-        candidateModels = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"];
-        extraHeaders["HTTP-Referer"] = "https://pezeex.com";
-        extraHeaders["X-Title"] = "Pezeex";
-      } else if (aiConfig.provider === "mistral") {
-        endpoint = "https://api.mistral.ai/v1/chat/completions";
-        candidateModels = ["mistral-small-latest", "open-mistral-nemo"];
-      }
-
-      if (aiConfig.customBaseUrl) {
-        endpoint = aiConfig.customBaseUrl.replace(/\/+$/, "");
-        if (!endpoint.includes("/chat/completions")) {
-          endpoint += "/chat/completions";
-        }
-      }
-      if (aiConfig.customModel) {
-        candidateModels = [aiConfig.customModel];
-      }
-
-      for (const model of candidateModels) {
-        try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${aiConfig.apiKey}`,
-              ...extraHeaders
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                {
-                  role: "system",
-                  content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
-                },
-                {
-                  role: "user",
-                  content: prompt
-                }
-              ],
-              response_format: { type: "json_object" }
-            })
-          });
-
-          if (response.ok) {
-            const data: any = await response.json();
-            if (data?.choices?.[0]?.message?.content) {
-              generatedText = data.choices[0].message.content;
-              break;
-            }
-          } else {
-            const errBody = await response.text();
-            lastError = new Error(`AI Provider [${response.status}]: ${errBody}`);
-          }
-        } catch (err: any) {
-          lastError = err;
-        }
-      }
-    }
-
-    if (!generatedText) {
-      throw lastError || new Error("Unable to generate alternatives at this moment.");
-    }
+    const { text: generatedText, keyId, totalKeys } = await executeAISearchWithRotation(prompt);
 
     let cleanText = generatedText.trim();
     if (cleanText.startsWith("```json")) cleanText = cleanText.substring(7);

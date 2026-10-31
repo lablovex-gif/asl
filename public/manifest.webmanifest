@@ -1,6 +1,6 @@
 {
-  "name": "pezeex - مساعد التسوق الذكي",
-  "short_name": "pezeex",
+  "name": "Pezeex | Shopping Assistant",
+  "short_name": "Pezeex",
   "description": "مساعد تسوق ذكي يقترح بدائل أرخص ومشابهة للمنتجات باستخدام الذكاء الاصطناعي",
   "start_url": "/",
   "display": "standalone",

@@ -2218,6 +2218,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    document.title = "Pezeex | Shopping Assistant";
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('admin') === 'true') {
       setIsAdmin(true);
