@@ -32,7 +32,11 @@ import {
   Moon, 
   Sun, 
   Pin, 
-  Heart
+  Heart,
+  KeyRound,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +59,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getProductAlternatives, ProductAlternative, ProductsResponse } from "./services/geminiService";
+import { getProductAlternatives, testApiKey, ProductAlternative, ProductsResponse } from "./services/geminiService";
 import { motion, AnimatePresence } from "motion/react";
 import { installTranslations } from "./lib/installTranslations";
 
@@ -2112,6 +2116,60 @@ export default function App() {
     return localStorage.getItem('hasDismissedInstall') === 'true';
   });
 
+  // API Keys Pool States
+  const [showApiKeysDialog, setShowApiKeysDialog] = useState(false);
+  const [apiKey1, setApiKey1] = useState(() => {
+    const pool = (localStorage.getItem('pezeex_api_keys') || '').split(',');
+    return pool[0] || '';
+  });
+  const [apiKey2, setApiKey2] = useState(() => {
+    const pool = (localStorage.getItem('pezeex_api_keys') || '').split(',');
+    return pool[1] || '';
+  });
+  const [apiKey3, setApiKey3] = useState(() => {
+    const pool = (localStorage.getItem('pezeex_api_keys') || '').split(',');
+    return pool[2] || '';
+  });
+  const [keyTestStatus, setKeyTestStatus] = useState<{ msg: string; isError?: boolean; isSuccess?: boolean } | null>(null);
+  const [keyTestLoading, setKeyTestLoading] = useState(false);
+
+  useEffect(() => {
+    document.title = "Pezeex | Shopping Assistant";
+  }, []);
+
+  const handleTestKey = async () => {
+    const testCandidate = apiKey1.trim() || apiKey2.trim() || apiKey3.trim();
+    if (!testCandidate) {
+      setKeyTestStatus({ msg: "يرجى كتابة مفتاح API واحد على الأقل للفحص.", isError: true });
+      return;
+    }
+    setKeyTestLoading(true);
+    setKeyTestStatus(null);
+    try {
+      const res = await testApiKey(testCandidate);
+      if (res.valid) {
+        setKeyTestStatus({ msg: res.message || "المفتاح صالح ومفعل بنجاح!", isSuccess: true });
+      } else {
+        setKeyTestStatus({ msg: res.message || "المفتاح غير صالح.", isError: true });
+      }
+    } catch (e: any) {
+      setKeyTestStatus({ msg: e?.message || "فشل الاتصال بخادم الفحص.", isError: true });
+    } finally {
+      setKeyTestLoading(false);
+    }
+  };
+
+  const handleSaveKeys = () => {
+    const keys = [apiKey1.trim(), apiKey2.trim(), apiKey3.trim()].filter(Boolean);
+    if (keys.length > 0) {
+      localStorage.setItem('pezeex_api_keys', keys.join(','));
+      setKeyTestStatus({ msg: `تم حفظ ${keys.length} مفاتيح بنجاح! سيتم التبديل التلقائي بينها بعد كل بحث.`, isSuccess: true });
+    } else {
+      localStorage.removeItem('pezeex_api_keys');
+      setKeyTestStatus({ msg: "تم تفريغ المفاتيح، سيتم استخدام محرك البحث الذكي التلقائي.", isSuccess: true });
+    }
+  };
+
   // Automatically update searchProgress when loading is active
   const isSearchFinishingRef = useRef(false);
 
@@ -2575,6 +2633,23 @@ export default function App() {
                         </div>
                         {t.dir === "rtl" && <Languages className="text-primary" size={22} />}
                       </button>
+
+                      <SheetClose
+                        onClick={() => setShowApiKeysDialog(true)}
+                        className={`w-full flex items-center gap-3 p-4 rounded-xl hover:bg-primary/5 transition-colors group ${t.dir === "rtl" ? "justify-end" : "justify-start"}`}
+                      >
+                        {t.dir === "ltr" && <KeyRound className="text-amber-500" size={22} />}
+                        <div className={`flex flex-col ${t.dir === "rtl" ? "items-end" : "items-start"}`}>
+                          <span className="text-lg font-medium group-hover:text-primary">
+                            {currentLang === "العربية" ? "إعدادات مفاتيح API" : "API Keys Settings"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {currentLang === "العربية" ? "تبديل تلقائي ومجاني" : "Multi-Key Rotation"}
+                          </span>
+                        </div>
+                        {t.dir === "rtl" && <KeyRound className="text-amber-500" size={22} />}
+                      </SheetClose>
+
                       <SheetClose 
                         onClick={() => {
                           setIsIntroFromMenu(true);
@@ -3218,6 +3293,116 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* API Keys Configuration Dialog */}
+      <Dialog open={showApiKeysDialog} onOpenChange={setShowApiKeysDialog}>
+        <DialogContent className={`max-w-[440px] ${t.dir === "rtl" ? "text-right" : "text-left"}`}>
+          <DialogHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <KeyRound className="text-amber-500 w-6 h-6" />
+              <DialogTitle className="text-lg font-bold">
+                {currentLang === "العربية" ? "إعدادات مفاتيح Bytez والبحث (API Keys)" : "Bytez & API Keys Rotation"}
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
+              {currentLang === "العربية"
+                ? "يدعم التطبيق مفاتيح Bytez (المكونة من 32 رمزاً سداسياً) وكذلك مفاتيح Google Gemini. يتم التبديل التلقائي بين المفاتيح بعد كل عملية بحث بالتتابع: الشخص الأول يستخدم المفتاح 1، الشخص الثاني المفتاح 2، الشخص الثالث المفتاح 3، ثم يعود للمفتاح 1."
+                : "Supports Bytez keys (32 hex characters) and Google Gemini keys. Automatically rotates keys per search: Person 1 -> Key 1, Person 2 -> Key 2, Person 3 -> Key 3, then back to Key 1."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 space-y-3">
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">
+                {currentLang === "العربية" ? "مفتاح Bytez / API رقم 1 (الرئيسي):" : "Bytez / API Key 1 (Primary):"}
+              </label>
+              <Input
+                placeholder="46345b87... أو AIzaSy..."
+                value={apiKey1}
+                onChange={(e) => {
+                  setApiKey1(e.target.value);
+                  setKeyTestStatus(null);
+                }}
+                className="h-10 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">
+                {currentLang === "العربية" ? "مفتاح Bytez / API رقم 2 (تبديل 2):" : "Bytez / API Key 2:"}
+              </label>
+              <Input
+                placeholder="00e74d9c... أو AIzaSy..."
+                value={apiKey2}
+                onChange={(e) => {
+                  setApiKey2(e.target.value);
+                  setKeyTestStatus(null);
+                }}
+                className="h-10 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">
+                {currentLang === "العربية" ? "مفتاح Bytez / API رقم 3 (تبديل 3):" : "Bytez / API Key 3:"}
+              </label>
+              <Input
+                placeholder="40b0c7f5... أو AIzaSy..."
+                value={apiKey3}
+                onChange={(e) => {
+                  setApiKey3(e.target.value);
+                  setKeyTestStatus(null);
+                }}
+                className="h-10 text-xs font-mono"
+              />
+            </div>
+
+            {keyTestStatus && (
+              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 border leading-relaxed ${
+                keyTestStatus.isError
+                  ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+              }`}>
+                {keyTestStatus.isError ? (
+                  <AlertCircle size={18} className="shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+                )}
+                <span>{keyTestStatus.msg}</span>
+              </div>
+            )}
+
+            <div className="bg-muted/40 p-3 rounded-xl text-[11px] text-muted-foreground leading-normal">
+              💡 {currentLang === "العربية"
+                ? "ملاحظة: إذا تركت الحقول فارغة، سيعتمد التطبيق تلقائياً على محرك البحث الذكي لتقديم أفضل البدائل والأسعار دون توقف."
+                : "Note: If left empty, the app automatically provides intelligent alternative recommendations."}
+            </div>
+          </div>
+
+          <DialogFooter className="flex-row gap-2 justify-end sm:justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={keyTestLoading}
+              onClick={handleTestKey}
+              className="text-xs gap-1.5"
+            >
+              {keyTestLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+              {currentLang === "العربية" ? "فحص المفتاح" : "Test Key"}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                handleSaveKeys();
+                setTimeout(() => setShowApiKeysDialog(false), 1200);
+              }}
+              className="text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {currentLang === "العربية" ? "حفظ وتفعيل" : "Save & Activate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Background Decoration */}
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-foreground/5 via-background to-background">
