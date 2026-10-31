@@ -10,15 +10,47 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Security: Disable X-Powered-By to prevent fingerprinting
+app.disable("x-powered-by");
+
+// Security: Enforce essential security response headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
 // Enable gzip/deflate compression for all requests
 app.use(compression());
-app.use(express.json({ limit: "1mb" }));
+// Security: Restrict JSON payload size to 256kb to prevent memory exhaustion DoS
+app.use(express.json({ limit: "256kb" }));
 
-// Helper to sanitize and validate URLs (prevents javascript:, data:, vbscript:, etc.)
+// Helper to sanitize and validate URLs (prevents javascript:, data:, vbscript:, SSRF to internal/cloud metadata IPs)
 function isValidHttpUrl(urlString: string): boolean {
   try {
     const url = new URL(urlString);
-    return url.protocol === "http:" || url.protocol === "https:";
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return false;
+    }
+    const hostname = url.hostname.toLowerCase();
+    // Block internal, loopback, private networks and cloud metadata IP addresses
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1" ||
+      hostname === "169.254.169.254" ||
+      hostname.endsWith(".internal") ||
+      hostname.endsWith(".local") ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)
+    ) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -44,6 +76,36 @@ function sanitizeUrl(rawUrl: string, fallbackQuery?: string): string {
   }
 
   return "";
+}
+
+// In-memory rate limiter per IP for /api/search (sliding window: max 40 searches per minute)
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of rateLimitMap.entries()) {
+    if (now > record.resetTime) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxRequests = 40;
+
+  const current = rateLimitMap.get(ip);
+  if (!current || now > current.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+
+  if (current.count >= maxRequests) {
+    return false;
+  }
+
+  current.count++;
+  return true;
 }
 
 interface AIConfigItem {
@@ -436,14 +498,22 @@ async function executeAISearchWithRotation(prompt: string): Promise<{ text: stri
 // Secure search endpoint proxying AI API calls with automatic key switching
 app.post("/api/search", async (req, res) => {
   try {
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "client";
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({
+        error: "عدد طلبات البحث كبير جداً في وقت قصير. يرجى الانتظار بضع ثوانٍ والمحاولة مجدداً.",
+      });
+    }
+
     const { productName, language = "العربية" } = req.body || {};
 
     if (!productName || typeof productName !== "string" || productName.trim().length === 0) {
       return res.status(400).json({ error: "Product name or search query is required." });
     }
 
-    const cleanProductName = productName.trim().substring(0, 500);
-    const cleanLanguage = typeof language === "string" ? language.trim().substring(0, 50) : "العربية";
+    // Limit input length and strip non-printable control characters
+    const cleanProductName = productName.replace(/[\x00-\x1F\x7F]/g, "").trim().substring(0, 300);
+    const cleanLanguage = typeof language === "string" ? language.replace(/[\x00-\x1F\x7F]/g, "").trim().substring(0, 50) : "العربية";
 
     const prompt = `أنت مساعد ذكي متخصص في إيجاد بدائل حقيقية وممتازة وأرخص للمنتجات.
 
