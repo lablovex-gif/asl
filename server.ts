@@ -57,35 +57,66 @@ function getAIConfig(): AIConfig {
   const env = process.env;
   let apiKey = "";
   let provider = "";
-  const customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
-  const customModel = env.AI_MODEL || env.OPENAI_MODEL || env.GEMINI_MODEL;
+  let customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
+  let customModel = env.AI_MODEL || env.OPENAI_MODEL || env.GEMINI_MODEL;
+
+  // Direct check for specifically configured providers
+  if (env.BLUESMINDS_API_KEY && env.BLUESMINDS_API_KEY.trim() && !env.BLUESMINDS_API_KEY.includes("your_bluesminds")) {
+    apiKey = env.BLUESMINDS_API_KEY.trim();
+    provider = "openai-compatible";
+    if (!customBaseUrl) customBaseUrl = "https://api.bluesminds.com/v1";
+    if (!customModel) customModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning";
+  } else if (env.OPENROUTER_API_KEY && env.OPENROUTER_API_KEY.trim()) {
+    apiKey = env.OPENROUTER_API_KEY.trim();
+    provider = "openrouter";
+  } else if (env.GROQ_API_KEY && env.GROQ_API_KEY.trim()) {
+    apiKey = env.GROQ_API_KEY.trim();
+    provider = "groq";
+  } else if (env.DEEPSEEK_API_KEY && env.DEEPSEEK_API_KEY.trim()) {
+    apiKey = env.DEEPSEEK_API_KEY.trim();
+    provider = "deepseek";
+  } else if (env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY.trim()) {
+    apiKey = env.ANTHROPIC_API_KEY.trim();
+    provider = "anthropic";
+  } else if (env.OPENAI_API_KEY && env.OPENAI_API_KEY.trim()) {
+    apiKey = env.OPENAI_API_KEY.trim();
+    provider = customBaseUrl ? "openai-compatible" : "openai";
+  } else if (env.GEMINI_API_KEY && env.GEMINI_API_KEY.trim() && env.GEMINI_API_KEY.trim() !== "MY_GEMINI_API_KEY") {
+    apiKey = env.GEMINI_API_KEY.trim();
+    provider = "gemini";
+  }
 
   const systemVars = new Set([
     "PATH", "PWD", "HOME", "SHELL", "USER", "HOSTNAME", "PORT", "NODE_ENV", "TERM", "SHLVL", "_", "LANG",
-    "DISABLE_HMR", "APP_URL", "K_SERVICE", "K_REVISION", "K_CONFIGURATION", "LS_COLORS", "COLORTERM"
+    "DISABLE_HMR", "APP_URL", "K_SERVICE", "K_REVISION", "K_CONFIGURATION", "LS_COLORS", "COLORTERM",
+    "CONTROL_PLANE_API_DIR", "AUTHORIZED_SERVICE_ACCOUNT_EMAIL"
   ]);
 
-  // Priority 1: Check provider-suggestive names
-  for (const [k, v] of Object.entries(env)) {
-    if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-    const val = v.trim();
-    if (val.length < 18 || val.length > 400 || val.startsWith("/") || val.startsWith("http://") || val.startsWith("https://") || val.startsWith("{")) continue;
+  // Priority 1: Check provider-suggestive names if not found
+  if (!apiKey) {
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
+      const val = v.trim();
+      if (val.length < 18 || val.length > 400 || val.startsWith("/") || val.startsWith("http://") || val.startsWith("https://") || val.startsWith("{")) continue;
 
-    const kUpper = k.toUpperCase();
-    if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) {
-      apiKey = val; provider = "openai"; break;
-    } else if (kUpper.includes("GROQ")) {
-      apiKey = val; provider = "groq"; break;
-    } else if (kUpper.includes("DEEPSEEK")) {
-      apiKey = val; provider = "deepseek"; break;
-    } else if (kUpper.includes("OPENROUTER")) {
-      apiKey = val; provider = "openrouter"; break;
-    } else if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) {
-      apiKey = val; provider = "anthropic"; break;
-    } else if (kUpper.includes("MISTRAL")) {
-      apiKey = val; provider = "mistral"; break;
-    } else if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) {
-      apiKey = val; provider = "gemini"; break;
+      const kUpper = k.toUpperCase();
+      if (kUpper.includes("BLUESMINDS")) {
+        apiKey = val; provider = "openai-compatible"; break;
+      } else if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) {
+        apiKey = val; provider = "openai"; break;
+      } else if (kUpper.includes("GROQ")) {
+        apiKey = val; provider = "groq"; break;
+      } else if (kUpper.includes("DEEPSEEK")) {
+        apiKey = val; provider = "deepseek"; break;
+      } else if (kUpper.includes("OPENROUTER")) {
+        apiKey = val; provider = "openrouter"; break;
+      } else if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) {
+        apiKey = val; provider = "anthropic"; break;
+      } else if (kUpper.includes("MISTRAL")) {
+        apiKey = val; provider = "mistral"; break;
+      } else if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) {
+        apiKey = val; provider = "gemini"; break;
+      }
     }
   }
 
@@ -103,19 +134,7 @@ function getAIConfig(): AIConfig {
       } else if (val.startsWith("sk-ant-")) {
         apiKey = val; provider = "anthropic"; break;
       } else if (val.startsWith("sk-proj-") || val.startsWith("sk-")) {
-        apiKey = val; provider = "openai"; break;
-      }
-    }
-  }
-
-  // Priority 3: Fallback - pick ANY non-system variable that looks like an API key token (name doesn't matter!)
-  if (!apiKey) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-      const val = v.trim();
-      if (val.length >= 20 && val.length <= 300 && !val.includes(" ") && !val.startsWith("/") && !val.includes("://")) {
-        apiKey = val;
-        break;
+        apiKey = val; provider = customBaseUrl ? "openai-compatible" : "openai"; break;
       }
     }
   }
@@ -241,7 +260,7 @@ app.post("/api/search", async (req, res) => {
 المنتج أو الاستفسار المطلوب: "${cleanProductName}"
 
 المطلوب:
-1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 12 إلى 18 منتجاً بديلاً حقيقياً وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
+1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 8 إلى 10 منتجات بديلة حقيقية وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
 2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
 3. استخرج النطاق الإلكتروني الرسمي للمتجر بدقة في حقل storeDomain (مثل: amazon.sa, noon.com, aliexpress.com, jarir.com, extra.com, ebay.com, temu.com, shein.com).
 4. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
@@ -360,12 +379,36 @@ app.post("/api/search", async (req, res) => {
           endpoint += "/chat/completions";
         }
       }
-      if (aiConfig.customModel) {
+      if (endpoint.includes("bluesminds.com")) {
+        candidateModels = [
+          aiConfig.customModel || "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+          "nvidia/nemotron-3.5-lightning-30b-a3b"
+        ];
+      } else if (aiConfig.customModel) {
         candidateModels = [aiConfig.customModel];
       }
 
       for (const model of candidateModels) {
         try {
+          const requestPayload: any = {
+            model,
+            messages: [
+              {
+                role: "system",
+                content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+              },
+              {
+                role: "user",
+                content: prompt
+              }
+            ],
+            response_format: { type: "json_object" }
+          };
+
+          if (model.includes("reasoning") || endpoint.includes("bluesminds.com")) {
+            requestPayload.reasoning_effort = "low";
+          }
+
           const response = await fetch(endpoint, {
             method: "POST",
             headers: {
@@ -373,20 +416,7 @@ app.post("/api/search", async (req, res) => {
               "Authorization": `Bearer ${aiConfig.apiKey}`,
               ...extraHeaders
             },
-            body: JSON.stringify({
-              model,
-              messages: [
-                {
-                  role: "system",
-                  content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
-                },
-                {
-                  role: "user",
-                  content: prompt
-                }
-              ],
-              response_format: { type: "json_object" }
-            })
+            body: JSON.stringify(requestPayload)
           });
 
           if (response.ok) {
