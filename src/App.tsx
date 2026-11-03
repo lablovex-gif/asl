@@ -405,6 +405,7 @@ const translations: any = {
     aiDisclaimer: "قد يخطئ الذكاء الاصطناعي أحياناً، يرجى التحقق من الأسعار والشحن قبل الشراء",
     aiSuggestions: "pezeex",
     noResults: "لم نجد بدائل لهذا المنتج حالياً، جرب البحث عن شيء آخر.",
+    searchLimitReached: "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً.",
     temuOffers: "عروض تيمو المميزة",
     copied: "تم نسخ كلمة البحث! الصقها في الموقع",
     checkPrice: "تحقق من السعر في بلدك",
@@ -427,6 +428,7 @@ const translations: any = {
     search: "Search",
     searching: "Searching for the best alternatives...",
     generatingResponse: "Generating response...",
+    searchLimitReached: "You have reached the maximum search limit (35 searches). Please try again later.",
     install: "Install App",
     installDesc: "Add to home screen to save money when shopping",
     menu: "Menu",
@@ -2401,10 +2403,64 @@ export default function App() {
     { name: "Arabic", native: "العربية" }
   ];
 
+  const MAX_USER_SEARCHES = 35;
+
+  const getUserSearchCount = (): number => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const savedDate = localStorage.getItem("pezeex_user_search_date");
+      if (savedDate !== today) {
+        localStorage.setItem("pezeex_user_search_date", today);
+        localStorage.setItem("pezeex_user_search_count", "0");
+        return 0;
+      }
+      return parseInt(localStorage.getItem("pezeex_user_search_count") || "0", 10);
+    } catch {
+      return 0;
+    }
+  };
+
+  const incrementUserSearchCount = (): number => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const savedDate = localStorage.getItem("pezeex_user_search_date");
+      let count = 0;
+      if (savedDate === today) {
+        count = parseInt(localStorage.getItem("pezeex_user_search_count") || "0", 10);
+      }
+      count += 1;
+      localStorage.setItem("pezeex_user_search_date", today);
+      localStorage.setItem("pezeex_user_search_count", count.toString());
+      return count;
+    } catch {
+      return 1;
+    }
+  };
+
   const handleSearch = async (e?: any, queryOverride?: string) => {
     if (e) e.preventDefault();
     const queryToSearch = queryOverride || searchQuery;
     if (!queryToSearch.trim() || loading) return;
+
+    // Check user 35 searches limit
+    const currentSearches = getUserSearchCount();
+    if (currentSearches >= MAX_USER_SEARCHES) {
+      setSearchQuery("");
+      setLoading(false);
+      setHistory([
+        { type: "user", content: queryToSearch },
+        { 
+          type: "ai", 
+          content: { 
+            alternatives: [], 
+            message: t.searchLimitReached || "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً."
+          } as ProductsResponse 
+        }
+      ]);
+      return;
+    }
+
+    incrementUserSearchCount();
 
     // Detect if this is likely a conversational intent rather than a product search
     const q = queryToSearch.trim().toLowerCase();
@@ -2494,16 +2550,8 @@ export default function App() {
       isSearchFinishingRef.current = true;
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      const rawErrMsg = error?.message || "";
-      let userNotice = t.noResults || "Unable to fetch alternatives right now. Please try again.";
-
-      if (rawErrMsg.toLowerCase().includes("api key") || rawErrMsg.toLowerCase().includes("not configured")) {
-        userNotice = `تنبيه: لم يتم العثور على مفتاح الذكاء الاصطناعي على السيرفر. يرجى وضع المفتاح في ملف .env أو .htaccess في الاستضافة.`;
-      } else if (rawErrMsg.toLowerCase().includes("reach search api") || rawErrMsg.toLowerCase().includes("404")) {
-        userNotice = `تعذر الاتصال بملف البحث الذكي (404 Not Found). تأكد من رفع مجلد api/search.php داخل مسار الموقع على الاستضافة.`;
-      } else if (rawErrMsg) {
-        userNotice = `${t.noResults || "لم نتمكن من جلب البدائل حالياً."} (${rawErrMsg})`;
-      }
+      // Show only clean localized message without technical AI/model error details
+      const userNotice = t.noResults || "لم نجد بدائل لهذا المنتج حالياً، جرب البحث عن شيء آخر.";
 
       setHistory([
         { type: "user", content: currentQuery },

@@ -143,7 +143,12 @@ function detectAIConfig() {
         if ($val[0] === '/' || strpos($val, 'http://') === 0 || strpos($val, 'https://') === 0 || $val[0] === '{') continue;
 
         $kUpper = strtoupper($k);
-        if (strpos($kUpper, 'OPENAI') !== false || strpos($kUpper, 'CHATGPT') !== false) {
+        if (strpos($kUpper, 'BLUESMINDS') !== false) {
+            $apiKey = $val; $provider = 'openai-compatible';
+            if (empty($customBaseUrl)) $customBaseUrl = 'https://api.bluesminds.com/v1';
+            if (empty($customModel)) $customModel = 'nvidia/nemotron-3.5-lightning-30b-a3b';
+            break;
+        } elseif (strpos($kUpper, 'OPENAI') !== false || strpos($kUpper, 'CHATGPT') !== false) {
             $apiKey = $val; $provider = 'openai'; break;
         } elseif (strpos($kUpper, 'GROQ') !== false) {
             $apiKey = $val; $provider = 'groq'; break;
@@ -236,6 +241,23 @@ if (empty($apiKey)) {
     exit;
 }
 
+// Rate limit check: max 35 searches per day per IP
+$clientIp = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'default';
+$clientIp = trim(explode(',', $clientIp)[0]);
+$rateLimitFile = sys_get_temp_dir() . '/pezeex_rl_' . md5($clientIp . date('Y-m-d'));
+$searchCount = file_exists($rateLimitFile) ? (int)@file_get_contents($rateLimitFile) : 0;
+
+if ($searchCount >= 35) {
+    http_response_code(429);
+    echo json_encode([
+        'error' => 'Search limit reached',
+        'message' => 'لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً.',
+        'alternatives' => []
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+@file_put_contents($rateLimitFile, (string)($searchCount + 1));
+
 // 2. Read JSON Input
 $rawInput = file_get_contents('php://input');
 $input = json_decode($rawInput, true);
@@ -309,7 +331,7 @@ $prompt = "أنت مساعد ذكي متخصص في إيجاد بدائل حقي
 المنتج أو الاستفسار المطلوب: \"{$cleanProductName}\"
 
 المطلوب:
-1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 12 إلى 18 منتجاً بديلاً حقيقياً وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
+1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 6 إلى 8 منتجات بديلة حقيقية وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
 2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
 3. استخرج النطاق الإلكتروني الرسمي للمتجر بدقة في حقل storeDomain (مثل: amazon.sa, noon.com, aliexpress.com, jarir.com, extra.com, ebay.com, temu.com, shein.com).
 4. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
@@ -497,7 +519,12 @@ if ($aiProvider === 'gemini') {
             $endpoint .= '/chat/completions';
         }
     }
-    if (!empty($customModel)) {
+    if (strpos($endpoint, 'bluesminds.com') !== false) {
+        $candidateModels = [
+            $customModel ?: "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+        ];
+    } elseif (!empty($customModel)) {
         $candidateModels = [$customModel];
     }
 
@@ -516,6 +543,10 @@ if ($aiProvider === 'gemini') {
             ],
             'response_format' => ['type' => 'json_object']
         ];
+
+        if (strpos($model, 'reasoning') !== false || strpos($endpoint, 'bluesminds.com') !== false) {
+            $payload['reasoning_effort'] = 'low';
+        }
 
         $headers = array_merge([
             'Content-Type: application/json',

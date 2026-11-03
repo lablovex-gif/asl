@@ -235,9 +235,31 @@ function resolveStoreDomain(store: string, aiDomain?: string): string {
   return "";
 }
 
+// Rate limit map: max 35 searches per day per IP
+const MAX_SEARCHES_PER_IP = 35;
+const ipSearchRecords = new Map<string, { count: number; date: string }>();
+
 // Secure search endpoint proxying Gemini API calls
 app.post("/api/search", async (req, res) => {
   try {
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "default";
+    const today = new Date().toISOString().slice(0, 10);
+    const record = ipSearchRecords.get(clientIp);
+
+    if (record && record.date === today && record.count >= MAX_SEARCHES_PER_IP) {
+      return res.status(429).json({
+        error: "Search limit reached",
+        message: "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً.",
+        alternatives: []
+      });
+    }
+
+    if (!record || record.date !== today) {
+      ipSearchRecords.set(clientIp, { count: 1, date: today });
+    } else {
+      record.count += 1;
+    }
+
     const { productName, language = "العربية" } = req.body || {};
 
     if (!productName || typeof productName !== "string" || productName.trim().length === 0) {
