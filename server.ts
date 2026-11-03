@@ -65,7 +65,7 @@ function getAIConfig(): AIConfig {
     apiKey = env.BLUESMINDS_API_KEY.trim();
     provider = "openai-compatible";
     if (!customBaseUrl) customBaseUrl = "https://api.bluesminds.com/v1";
-    if (!customModel) customModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning";
+    if (!customModel) customModel = "nvidia/nemotron-3.5-lightning-30b-a3b";
   } else if (env.OPENROUTER_API_KEY && env.OPENROUTER_API_KEY.trim()) {
     apiKey = env.OPENROUTER_API_KEY.trim();
     provider = "openrouter";
@@ -260,7 +260,7 @@ app.post("/api/search", async (req, res) => {
 المنتج أو الاستفسار المطلوب: "${cleanProductName}"
 
 المطلوب:
-1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 8 إلى 10 منتجات بديلة حقيقية وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
+1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 6 إلى 8 منتجات بديلة حقيقية وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
 2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
 3. استخرج النطاق الإلكتروني الرسمي للمتجر بدقة في حقل storeDomain (مثل: amazon.sa, noon.com, aliexpress.com, jarir.com, extra.com, ebay.com, temu.com, shein.com).
 4. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
@@ -381,8 +381,8 @@ app.post("/api/search", async (req, res) => {
       }
       if (endpoint.includes("bluesminds.com")) {
         candidateModels = [
-          aiConfig.customModel || "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-          "nvidia/nemotron-3.5-lightning-30b-a3b"
+          aiConfig.customModel || "nvidia/nemotron-3.5-lightning-30b-a3b",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
         ];
       } else if (aiConfig.customModel) {
         candidateModels = [aiConfig.customModel];
