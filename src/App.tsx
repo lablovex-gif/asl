@@ -32,9 +32,7 @@ import {
   Moon, 
   Sun, 
   Pin, 
-  Heart,
-  CheckCircle2,
-  AlertCircle
+  Heart
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -403,7 +401,6 @@ const translations: any = {
     aiDisclaimer: "قد يخطئ الذكاء الاصطناعي أحياناً، يرجى التحقق من الأسعار والشحن قبل الشراء",
     aiSuggestions: "pezeex",
     noResults: "لم نجد بدائل لهذا المنتج حالياً، جرب البحث عن شيء آخر.",
-    searchLimitReached: "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً.",
     temuOffers: "عروض تيمو المميزة",
     copied: "تم نسخ كلمة البحث! الصقها في الموقع",
     checkPrice: "تحقق من السعر في بلدك",
@@ -426,7 +423,6 @@ const translations: any = {
     search: "Search",
     searching: "Searching for the best alternatives...",
     generatingResponse: "Generating response...",
-    searchLimitReached: "You have reached the maximum search limit (35 searches). Please try again later.",
     install: "Install App",
     installDesc: "Add to home screen to save money when shopping",
     menu: "Menu",
@@ -2115,9 +2111,6 @@ export default function App() {
   const [hasDismissedInstall, setHasDismissedInstall] = useState(() => {
     return localStorage.getItem('hasDismissedInstall') === 'true';
   });
-  useEffect(() => {
-    document.title = "Pezeex | Shopping Assistant";
-  }, []);
 
   // Automatically update searchProgress when loading is active
   const isSearchFinishingRef = useRef(false);
@@ -2222,10 +2215,6 @@ export default function App() {
     setIsIOS(/iphone|ipad|ipod/.test(userAgent));
 
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-  }, []);
-
-  useEffect(() => {
-    document.title = "Pezeex | Shopping Assistant";
   }, []);
 
   useEffect(() => {
@@ -2350,64 +2339,10 @@ export default function App() {
     { name: "Arabic", native: "العربية" }
   ];
 
-  const MAX_USER_SEARCHES = 35;
-
-  const getUserSearchCount = (): number => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const savedDate = localStorage.getItem("pezeex_user_search_date");
-      if (savedDate !== today) {
-        localStorage.setItem("pezeex_user_search_date", today);
-        localStorage.setItem("pezeex_user_search_count", "0");
-        return 0;
-      }
-      return parseInt(localStorage.getItem("pezeex_user_search_count") || "0", 10);
-    } catch {
-      return 0;
-    }
-  };
-
-  const incrementUserSearchCount = (): number => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const savedDate = localStorage.getItem("pezeex_user_search_date");
-      let count = 0;
-      if (savedDate === today) {
-        count = parseInt(localStorage.getItem("pezeex_user_search_count") || "0", 10);
-      }
-      count += 1;
-      localStorage.setItem("pezeex_user_search_date", today);
-      localStorage.setItem("pezeex_user_search_count", count.toString());
-      return count;
-    } catch {
-      return 1;
-    }
-  };
-
   const handleSearch = async (e?: any, queryOverride?: string) => {
     if (e) e.preventDefault();
     const queryToSearch = queryOverride || searchQuery;
     if (!queryToSearch.trim() || loading) return;
-
-    // Check user 35 searches limit
-    const currentSearches = getUserSearchCount();
-    if (currentSearches >= MAX_USER_SEARCHES) {
-      setSearchQuery("");
-      setLoading(false);
-      setHistory([
-        { type: "user", content: queryToSearch },
-        { 
-          type: "ai", 
-          content: { 
-            alternatives: [], 
-            message: t.searchLimitReached || "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً."
-          } as ProductsResponse 
-        }
-      ]);
-      return;
-    }
-
-    incrementUserSearchCount();
 
     // Detect if this is likely a conversational intent rather than a product search
     const q = queryToSearch.trim().toLowerCase();
@@ -2497,8 +2432,25 @@ export default function App() {
       isSearchFinishingRef.current = true;
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Show only clean localized message without technical AI/model error details
-      const userNotice = t.noResults || "لم نجد بدائل لهذا المنتج حالياً، جرب البحث عن شيء آخر.";
+      let cleanErrMsg = error?.message || "";
+      try {
+        if (cleanErrMsg.startsWith("{") && cleanErrMsg.endsWith("}")) {
+          const parsedErr = JSON.parse(cleanErrMsg);
+          cleanErrMsg = parsedErr.details || parsedErr.error || parsedErr.message || "";
+        }
+      } catch {
+        // keep cleanErrMsg
+      }
+
+      let userNotice = t.noResults || (currentLang === "العربية" ? "لم نتمكن من جلب البدائل حالياً. يرجى المحاولة مرة أخرى." : "Unable to fetch alternatives right now. Please try again.");
+
+      if (cleanErrMsg.toLowerCase().includes("api key") || cleanErrMsg.toLowerCase().includes("not configured")) {
+        userNotice = currentLang === "العربية" 
+          ? "تنبيه: لم يتم العثور على مفتاح الذكاء الاصطناعي على السيرفر. يرجى التأكد من ضبط المفتاح في المتغيرات البيئية."
+          : "Notice: AI API Key is not configured. Please set an API key in your environment settings.";
+      } else if (cleanErrMsg && !cleanErrMsg.includes("404") && cleanErrMsg.length < 120) {
+        userNotice = `${userNotice} (${cleanErrMsg})`;
+      }
 
       setHistory([
         { type: "user", content: currentQuery },
@@ -2628,8 +2580,6 @@ export default function App() {
                         </div>
                         {t.dir === "rtl" && <Languages className="text-primary" size={22} />}
                       </button>
-
-
                       <SheetClose 
                         onClick={() => {
                           setIsIntroFromMenu(true);
@@ -3273,8 +3223,6 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-
-
 
       {/* Background Decoration */}
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-foreground/5 via-background to-background">

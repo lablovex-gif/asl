@@ -46,127 +46,6 @@ function sanitizeUrl(rawUrl: string, fallbackQuery?: string): string {
   return "";
 }
 
-interface AIConfig {
-  provider: "gemini" | "openai" | "groq" | "deepseek" | "openrouter" | "anthropic" | "mistral" | "openai-compatible";
-  apiKey: string;
-  customBaseUrl?: string;
-  customModel?: string;
-}
-
-function getAIConfig(): AIConfig {
-  const env = process.env;
-  let apiKey = "";
-  let provider = "";
-  let customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
-  let customModel = env.AI_MODEL || env.OPENAI_MODEL || env.GEMINI_MODEL;
-
-  // Direct check for specifically configured providers
-  if (env.BLUESMINDS_API_KEY && env.BLUESMINDS_API_KEY.trim() && !env.BLUESMINDS_API_KEY.includes("your_bluesminds")) {
-    apiKey = env.BLUESMINDS_API_KEY.trim();
-    provider = "openai-compatible";
-    if (!customBaseUrl) customBaseUrl = "https://api.bluesminds.com/v1";
-    if (!customModel) customModel = "nvidia/nemotron-3.5-lightning-30b-a3b";
-  } else if (env.OPENROUTER_API_KEY && env.OPENROUTER_API_KEY.trim()) {
-    apiKey = env.OPENROUTER_API_KEY.trim();
-    provider = "openrouter";
-  } else if (env.GROQ_API_KEY && env.GROQ_API_KEY.trim()) {
-    apiKey = env.GROQ_API_KEY.trim();
-    provider = "groq";
-  } else if (env.DEEPSEEK_API_KEY && env.DEEPSEEK_API_KEY.trim()) {
-    apiKey = env.DEEPSEEK_API_KEY.trim();
-    provider = "deepseek";
-  } else if (env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY.trim()) {
-    apiKey = env.ANTHROPIC_API_KEY.trim();
-    provider = "anthropic";
-  } else if (env.OPENAI_API_KEY && env.OPENAI_API_KEY.trim()) {
-    apiKey = env.OPENAI_API_KEY.trim();
-    provider = customBaseUrl ? "openai-compatible" : "openai";
-  } else if (env.GEMINI_API_KEY && env.GEMINI_API_KEY.trim() && env.GEMINI_API_KEY.trim() !== "MY_GEMINI_API_KEY") {
-    apiKey = env.GEMINI_API_KEY.trim();
-    provider = "gemini";
-  }
-
-  const systemVars = new Set([
-    "PATH", "PWD", "HOME", "SHELL", "USER", "HOSTNAME", "PORT", "NODE_ENV", "TERM", "SHLVL", "_", "LANG",
-    "DISABLE_HMR", "APP_URL", "K_SERVICE", "K_REVISION", "K_CONFIGURATION", "LS_COLORS", "COLORTERM",
-    "CONTROL_PLANE_API_DIR", "AUTHORIZED_SERVICE_ACCOUNT_EMAIL"
-  ]);
-
-  // Priority 1: Check provider-suggestive names if not found
-  if (!apiKey) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-      const val = v.trim();
-      if (val.length < 18 || val.length > 400 || val.startsWith("/") || val.startsWith("http://") || val.startsWith("https://") || val.startsWith("{")) continue;
-
-      const kUpper = k.toUpperCase();
-      if (kUpper.includes("BLUESMINDS")) {
-        apiKey = val; provider = "openai-compatible"; break;
-      } else if (kUpper.includes("OPENAI") || kUpper.includes("CHATGPT")) {
-        apiKey = val; provider = "openai"; break;
-      } else if (kUpper.includes("GROQ")) {
-        apiKey = val; provider = "groq"; break;
-      } else if (kUpper.includes("DEEPSEEK")) {
-        apiKey = val; provider = "deepseek"; break;
-      } else if (kUpper.includes("OPENROUTER")) {
-        apiKey = val; provider = "openrouter"; break;
-      } else if (kUpper.includes("ANTHROPIC") || kUpper.includes("CLAUDE")) {
-        apiKey = val; provider = "anthropic"; break;
-      } else if (kUpper.includes("MISTRAL")) {
-        apiKey = val; provider = "mistral"; break;
-      } else if (kUpper.includes("GEMINI") || kUpper.includes("GOOGLE")) {
-        apiKey = val; provider = "gemini"; break;
-      }
-    }
-  }
-
-  // Priority 2: Check ANY variable value for known key signatures
-  if (!apiKey) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string" || systemVars.has(k.toUpperCase())) continue;
-      const val = v.trim();
-      if (val.startsWith("AIzaSy") || val.startsWith("AQ.")) {
-        apiKey = val; provider = "gemini"; break;
-      } else if (val.startsWith("gsk_")) {
-        apiKey = val; provider = "groq"; break;
-      } else if (val.startsWith("sk-or-")) {
-        apiKey = val; provider = "openrouter"; break;
-      } else if (val.startsWith("sk-ant-")) {
-        apiKey = val; provider = "anthropic"; break;
-      } else if (val.startsWith("sk-proj-") || val.startsWith("sk-")) {
-        apiKey = val; provider = customBaseUrl ? "openai-compatible" : "openai"; break;
-      }
-    }
-  }
-
-  apiKey = (apiKey || "").trim();
-
-  if (apiKey && !provider) {
-    if (apiKey.startsWith("AIzaSy")) {
-      provider = "gemini";
-    } else if (apiKey.startsWith("gsk_")) {
-      provider = "groq";
-    } else if (apiKey.startsWith("sk-or-")) {
-      provider = "openrouter";
-    } else if (apiKey.startsWith("sk-ant-")) {
-      provider = "anthropic";
-    } else if (customBaseUrl) {
-      provider = "openai-compatible";
-    } else if (apiKey.startsWith("sk-")) {
-      provider = "openai";
-    } else {
-      provider = "gemini";
-    }
-  }
-
-  return {
-    provider: (provider || "gemini") as any,
-    apiKey,
-    customBaseUrl,
-    customModel
-  };
-}
-
 let aiClient: GoogleGenAI | null = null;
 function getAIClient(apiKey: string): GoogleGenAI {
   if (!aiClient) {
@@ -187,12 +66,10 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Candidate models in preference order (reliable and active)
-const CANDIDATE_MODELS = [
-  "gemini-3.6-flash",
-  "gemini-3.1-flash-lite",
+const GEMINI_CANDIDATE_MODELS = [
+  "gemini-3.8-flash",
   "gemini-flash-latest",
-  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite",
 ];
 
 function resolveStoreDomain(store: string, aiDomain?: string): string {
@@ -235,31 +112,281 @@ function resolveStoreDomain(store: string, aiDomain?: string): string {
   return "";
 }
 
-// Rate limit map: max 35 searches per day per IP
-const MAX_SEARCHES_PER_IP = 35;
-const ipSearchRecords = new Map<string, { count: number; date: string }>();
+interface AIRunner {
+  name: string;
+  run: (prompt: string) => Promise<string | null>;
+}
 
-// Secure search endpoint proxying Gemini API calls
-app.post("/api/search", async (req, res) => {
-  try {
-    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "default";
-    const today = new Date().toISOString().slice(0, 10);
-    const record = ipSearchRecords.get(clientIp);
+function getAIRunners(): AIRunner[] {
+  const env = process.env;
+  const runners: AIRunner[] = [];
 
-    if (record && record.date === today && record.count >= MAX_SEARCHES_PER_IP) {
-      return res.status(429).json({
-        error: "Search limit reached",
-        message: "لقد وصلت إلى الحد المسموح به لعمليات البحث (35 عملية بحث). يرجى المحاولة لاحقاً.",
-        alternatives: []
+  const customBaseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL;
+  const customModel = env.AI_MODEL || env.OPENAI_MODEL;
+  const bluesmindsKey = env.BLUESMINDS_API_KEY;
+  const genericAIKey = env.AI_API_KEY || env.AI_KEY;
+
+  // 1. Check for Custom / OpenAI-Compatible Provider (e.g. Bluesminds, vLLM, custom proxy)
+  if (customBaseUrl || bluesmindsKey) {
+    const baseUrl = (customBaseUrl || (bluesmindsKey ? "https://api.bluesminds.com/v1" : "")).replace(/\/+$/, "");
+    let endpoint = baseUrl;
+    if (!endpoint.includes("/chat/completions")) {
+      endpoint = `${endpoint}/chat/completions`;
+    }
+
+    const key = (bluesmindsKey || genericAIKey || env.OPENAI_API_KEY || "").trim();
+    const candidateModels = customModel 
+      ? [customModel]
+      : ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "meta/llama-3.2-11b-vision-instruct", "moonshotai/kimi-k3"];
+
+    if (key && endpoint) {
+      runners.push({
+        name: `Custom Endpoint (${endpoint})`,
+        run: async (prompt: string) => {
+          let lastErr: any = null;
+          for (const model of candidateModels) {
+            try {
+              const res = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${key}`,
+                },
+                body: JSON.stringify({
+                  model,
+                  messages: [
+                    {
+                      role: "system",
+                      content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+                    },
+                    {
+                      role: "user",
+                      content: prompt
+                    }
+                  ],
+                  response_format: { type: "json_object" }
+                })
+              });
+
+              if (res.ok) {
+                const data: any = await res.json();
+                const content = data?.choices?.[0]?.message?.content;
+                if (content && typeof content === "string") {
+                  return content;
+                }
+              } else {
+                const errBody = await res.text().catch(() => "");
+                lastErr = new Error(`HTTP ${res.status}: ${errBody.slice(0, 300)}`);
+              }
+            } catch (e: any) {
+              lastErr = e;
+            }
+          }
+          throw lastErr || new Error("Custom AI endpoint returned no content");
+        }
       });
     }
+  }
 
-    if (!record || record.date !== today) {
-      ipSearchRecords.set(clientIp, { count: 1, date: today });
-    } else {
-      record.count += 1;
+  // 2. Check for Gemini API (Google GenAI)
+  const geminiKey = (env.GEMINI_API_KEY || env.GOOGLE_API_KEY || (genericAIKey && genericAIKey.startsWith("AIzaSy") ? genericAIKey : "")).trim();
+  if (geminiKey) {
+    const geminiModels = [...GEMINI_CANDIDATE_MODELS];
+    // If a valid Gemini model is specified in GEMINI_MODEL, test it first
+    if (env.GEMINI_MODEL && env.GEMINI_MODEL.startsWith("gemini-") && !geminiModels.includes(env.GEMINI_MODEL)) {
+      geminiModels.unshift(env.GEMINI_MODEL);
     }
 
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        message: { type: Type.STRING },
+        alternatives: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              store: { type: Type.STRING },
+              storeDomain: { type: Type.STRING },
+              name: { type: Type.STRING },
+              searchKey: { type: Type.STRING },
+              price: { type: Type.STRING },
+              description: { type: Type.STRING },
+              similarity: { type: Type.STRING },
+              exactUrl: { type: Type.STRING },
+              imageUrl: { type: Type.STRING },
+              logoUrl: { type: Type.STRING }
+            },
+            required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
+          }
+        }
+      },
+      required: ["alternatives"]
+    };
+
+    runners.push({
+      name: "Google Gemini",
+      run: async (prompt: string) => {
+        const ai = getAIClient(geminiKey);
+        let lastErr: any = null;
+
+        for (const model of geminiModels) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema,
+              },
+            });
+
+            if (response.text) {
+              return response.text;
+            }
+          } catch (err: any) {
+            lastErr = err;
+            console.warn(`[AI Search] Gemini model ${model} failed, trying next candidate...`, err?.message || err);
+          }
+        }
+        throw lastErr || new Error("Gemini returned no content");
+      }
+    });
+  }
+
+  // 3. Check for Groq
+  const groqKey = (env.GROQ_API_KEY || (genericAIKey && genericAIKey.startsWith("gsk_") ? genericAIKey : "")).trim();
+  if (groqKey) {
+    runners.push({
+      name: "Groq",
+      run: async (prompt: string) => {
+        const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        let lastErr: any = null;
+        for (const model of models) {
+          try {
+            const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${groqKey}`
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+                  },
+                  { role: "user", content: prompt }
+                ],
+                response_format: { type: "json_object" }
+              })
+            });
+            if (res.ok) {
+              const data: any = await res.json();
+              const content = data?.choices?.[0]?.message?.content;
+              if (content) return content;
+            } else {
+              const b = await res.text().catch(() => "");
+              lastErr = new Error(`Groq HTTP ${res.status}: ${b.slice(0, 200)}`);
+            }
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        throw lastErr || new Error("Groq returned no content");
+      }
+    });
+  }
+
+  // 4. Check for OpenRouter
+  const openRouterKey = (env.OPENROUTER_API_KEY || (genericAIKey && genericAIKey.startsWith("sk-or-") ? genericAIKey : "")).trim();
+  if (openRouterKey) {
+    runners.push({
+      name: "OpenRouter",
+      run: async (prompt: string) => {
+        const models = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct"];
+        let lastErr: any = null;
+        for (const model of models) {
+          try {
+            const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${openRouterKey}`,
+                "HTTP-Referer": "https://pezeex.com",
+                "X-Title": "Pezeex"
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+                  },
+                  { role: "user", content: prompt }
+                ],
+                response_format: { type: "json_object" }
+              })
+            });
+            if (res.ok) {
+              const data: any = await res.json();
+              const content = data?.choices?.[0]?.message?.content;
+              if (content) return content;
+            } else {
+              const b = await res.text().catch(() => "");
+              lastErr = new Error(`OpenRouter HTTP ${res.status}: ${b.slice(0, 200)}`);
+            }
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        throw lastErr || new Error("OpenRouter returned no content");
+      }
+    });
+  }
+
+  // 5. Check for official OpenAI
+  const openaiKey = env.OPENAI_API_KEY?.trim();
+  if (openaiKey && !customBaseUrl) {
+    runners.push({
+      name: "OpenAI",
+      run: async (prompt: string) => {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiKey}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
+              },
+              { role: "user", content: prompt }
+            ],
+            response_format: { type: "json_object" }
+          })
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const content = data?.choices?.[0]?.message?.content;
+          if (content) return content;
+        }
+        const b = await res.text().catch(() => "");
+        throw new Error(`OpenAI HTTP ${res.status}: ${b.slice(0, 200)}`);
+      }
+    });
+  }
+
+  return runners;
+}
+
+// Secure search endpoint proxying AI API calls
+app.post("/api/search", async (req, res) => {
+  try {
     const { productName, language = "العربية" } = req.body || {};
 
     if (!productName || typeof productName !== "string" || productName.trim().length === 0) {
@@ -269,11 +396,11 @@ app.post("/api/search", async (req, res) => {
     const cleanProductName = productName.trim().substring(0, 500);
     const cleanLanguage = typeof language === "string" ? language.trim().substring(0, 50) : "العربية";
 
-    const aiConfig = getAIConfig();
-    if (!aiConfig.apiKey) {
+    const runners = getAIRunners();
+    if (runners.length === 0) {
       return res.status(500).json({
         error: "AI API Key is not configured.",
-        details: "Please set an API key for Gemini, OpenAI, Groq, DeepSeek, OpenRouter, Anthropic, or any AI in your environment variables or Secrets panel."
+        details: "Please set an API key for Gemini, OpenAI, Bluesminds, Groq, or OpenRouter in your environment variables or Secrets panel."
       });
     }
 
@@ -282,7 +409,7 @@ app.post("/api/search", async (req, res) => {
 المنتج أو الاستفسار المطلوب: "${cleanProductName}"
 
 المطلوب:
-1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 6 إلى 8 منتجات بديلة حقيقية وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
+1. اقترح قائمة غنية ومتنوعة تحتوي على ما بين 12 إلى 18 منتجاً بديلاً حقيقياً وأرخص ثمناً وتوفر قيمة ممتازة ومنافسة مقابل السعر مقارنة بالمنتج الأصلي.
 2. لكل منتج بديل، حدد المتجر أو المنصة التي يتوفر بها (نوّع بين المتاجر مثل: أمازون، نون، علي إكسبريس، جرير، إكسترا، إيباي، إلخ).
 3. استخرج النطاق الإلكتروني الرسمي للمتجر بدقة في حقل storeDomain (مثل: amazon.sa, noon.com, aliexpress.com, jarir.com, extra.com, ebay.com, temu.com, shein.com).
 4. اكتب سبباً مقنعاً ومختصراً يوضح لماذا يعتبر هذا المنتج خياراً وبديلاً ممتازاً وأرخص.
@@ -293,167 +420,16 @@ app.post("/api/search", async (req, res) => {
     let generatedText: string | null = null;
     let lastError: any = null;
 
-    if (aiConfig.provider === "gemini") {
-      const ai = getAIClient(aiConfig.apiKey);
-      const responseSchema = {
-        type: Type.OBJECT,
-        properties: {
-          message: { type: Type.STRING },
-          alternatives: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                store: { type: Type.STRING },
-                storeDomain: { type: Type.STRING },
-                name: { type: Type.STRING },
-                searchKey: { type: Type.STRING },
-                price: { type: Type.STRING },
-                description: { type: Type.STRING },
-                similarity: { type: Type.STRING },
-                exactUrl: { type: Type.STRING },
-                imageUrl: { type: Type.STRING },
-                logoUrl: { type: Type.STRING }
-              },
-              required: ["store", "name", "searchKey", "price", "description", "similarity", "exactUrl"]
-            }
-          }
-        },
-        required: ["alternatives"]
-      };
-
-      const candidateModels = aiConfig.customModel ? [aiConfig.customModel] : CANDIDATE_MODELS;
-
-      for (const model of candidateModels) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema,
-            },
-          });
-          if (response.text) {
-            generatedText = response.text;
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
-          console.warn(`Model ${model} failed, trying next candidate...`, err?.message || err);
-        }
-      }
-    } else if (aiConfig.provider === "anthropic") {
-      const model = aiConfig.customModel || "claude-3-5-haiku-20241022";
+    for (const runner of runners) {
       try {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": aiConfig.apiKey,
-            "anthropic-version": "2023-06-01"
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 4096,
-            system: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown blocks or any text before or after the JSON.",
-            messages: [{ role: "user", content: prompt }]
-          })
-        });
-
-        if (response.ok) {
-          const data: any = await response.json();
-          if (data?.content?.[0]?.text) {
-            generatedText = data.content[0].text;
-          }
-        } else {
-          const errBody = await response.text();
-          lastError = new Error(`Anthropic error [${response.status}]: ${errBody}`);
+        const text = await runner.run(prompt);
+        if (text && text.trim().length > 0) {
+          generatedText = text;
+          break;
         }
       } catch (err: any) {
         lastError = err;
-      }
-    } else {
-      // OpenAI and OpenAI-compatible (Groq, DeepSeek, OpenRouter, Mistral, Custom)
-      let endpoint = "https://api.openai.com/v1/chat/completions";
-      let candidateModels = ["gpt-4o-mini", "gpt-4o"];
-      const extraHeaders: Record<string, string> = {};
-
-      if (aiConfig.provider === "groq") {
-        endpoint = "https://api.groq.com/openai/v1/chat/completions";
-        candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-      } else if (aiConfig.provider === "deepseek") {
-        endpoint = "https://api.deepseek.com/chat/completions";
-        candidateModels = ["deepseek-chat"];
-      } else if (aiConfig.provider === "openrouter") {
-        endpoint = "https://openrouter.ai/api/v1/chat/completions";
-        candidateModels = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"];
-        extraHeaders["HTTP-Referer"] = "https://pezeex.com";
-        extraHeaders["X-Title"] = "Pezeex";
-      } else if (aiConfig.provider === "mistral") {
-        endpoint = "https://api.mistral.ai/v1/chat/completions";
-        candidateModels = ["mistral-small-latest", "open-mistral-nemo"];
-      }
-
-      if (aiConfig.customBaseUrl) {
-        endpoint = aiConfig.customBaseUrl.replace(/\/+$/, "");
-        if (!endpoint.includes("/chat/completions")) {
-          endpoint += "/chat/completions";
-        }
-      }
-      if (endpoint.includes("bluesminds.com")) {
-        candidateModels = [
-          aiConfig.customModel || "nvidia/nemotron-3.5-lightning-30b-a3b",
-          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-        ];
-      } else if (aiConfig.customModel) {
-        candidateModels = [aiConfig.customModel];
-      }
-
-      for (const model of candidateModels) {
-        try {
-          const requestPayload: any = {
-            model,
-            messages: [
-              {
-                role: "system",
-                content: "You are a shopping expert assistant. You MUST respond with ONLY a valid JSON object strictly matching this schema: {\"message\": string, \"alternatives\": [{\"store\": string, \"storeDomain\": string, \"name\": string, \"searchKey\": string, \"price\": string, \"description\": string, \"similarity\": string, \"exactUrl\": string, \"imageUrl\": string, \"logoUrl\": string}]}. Do NOT include markdown formatting or commentary."
-              },
-              {
-                role: "user",
-                content: prompt
-              }
-            ],
-            response_format: { type: "json_object" }
-          };
-
-          if (model.includes("reasoning") || endpoint.includes("bluesminds.com")) {
-            requestPayload.reasoning_effort = "low";
-          }
-
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${aiConfig.apiKey}`,
-              ...extraHeaders
-            },
-            body: JSON.stringify(requestPayload)
-          });
-
-          if (response.ok) {
-            const data: any = await response.json();
-            if (data?.choices?.[0]?.message?.content) {
-              generatedText = data.choices[0].message.content;
-              break;
-            }
-          } else {
-            const errBody = await response.text();
-            lastError = new Error(`AI Provider [${response.status}]: ${errBody}`);
-          }
-        } catch (err: any) {
-          lastError = err;
-        }
+        console.warn(`[AI Search] Runner '${runner.name}' failed, attempting fallback...`, err?.message || err);
       }
     }
 
@@ -466,6 +442,13 @@ app.post("/api/search", async (req, res) => {
     if (cleanText.startsWith("```")) cleanText = cleanText.substring(3);
     if (cleanText.endsWith("```")) cleanText = cleanText.slice(0, -3);
     cleanText = cleanText.trim();
+
+    // Safely extract the outermost JSON object if model outputs preamble or thoughts
+    const firstBrace = cleanText.indexOf("{");
+    const lastBrace = cleanText.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+    }
 
     const parsed = JSON.parse(cleanText);
 
